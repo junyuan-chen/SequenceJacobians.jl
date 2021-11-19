@@ -252,7 +252,7 @@ function _resids!(resids::AbstractVector, ss::SteadyState)
     end
 end
 
-function residuals!(resids::AbstractVector, ss::SteadyState{TF}) where TF
+function residuals!(resids::AbstractVector, ss::SteadyState)
     for b in ss.blks
         steadystate!(ss.varvals, b)
     end
@@ -260,14 +260,14 @@ function residuals!(resids::AbstractVector, ss::SteadyState{TF}) where TF
     return resids
 end
 
-residuals!(ss::SteadyState{TF}) where TF = residuals!(ss.resids, ss)
+residuals!(ss::SteadyState) = residuals!(ss.resids, ss)
 
 function residuals!(resids::AbstractVector, ss::SteadyState, inputs::AbstractVector)
     _inputs!(ss, inputs)
     return residuals!(resids, ss)
 end
 
-residuals!(ss::SteadyState{TF}, inputs::AbstractVector) where TF =
+residuals!(ss::SteadyState, inputs::AbstractVector) =
     residuals!(ss.resids, ss, inputs)
 
 function criterion!(ss::SteadyState; weight::Union{AbstractMatrix,UniformScaling}=I)

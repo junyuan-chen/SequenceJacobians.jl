@@ -2,7 +2,7 @@ module SequenceJacobians
 
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: Diagonal, I, UniformScaling, lu!, ldiv!
+using LinearAlgebra: I, UniformScaling, LU, lu!, ldiv!, norm
 using LinearMaps
 
 import Base: ==, eltype, zero, show, convert
@@ -33,6 +33,7 @@ export Shift,
        block,
        steadystate!,
        jacobian,
+       transition!,
 
        BlockOrVar,
        SequenceSpaceModel,
@@ -45,13 +46,22 @@ export Shift,
        residuals!,
        criterion!,
 
-       Jacobians,
-       ImpulseResponseMaps,
-       getG!
+       TotalJacobian,
+       GEJacobian,
+       getG!,
+
+       Transition,
+       update!,
+       solve!,
+
+       linirf,
+       nlirf
 
 include("shift.jl")
 include("blocks.jl")
 include("model.jl")
+include("jacobian.jl")
+include("transition.jl")
 include("irf.jl")
 
 end # module

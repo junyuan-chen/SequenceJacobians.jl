@@ -49,7 +49,7 @@ has_offset_axes(::Shift) = false
 copy(S::Shift) = Shift(copy(S.d), copy(S.v))
 convert(::Type{Shift{T}}, S::Shift) where T = Shift(S.d, convert(Vector{T}, S.v))
 
-isdiag(::Shift) = true
+isdiag(S::Shift) = all(k[1]==0 for k in keys(S.d))
 iszero(S::Shift) = iszero(S.v)
 
 function transpose(S::Shift)

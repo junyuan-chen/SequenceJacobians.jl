@@ -1,4 +1,4 @@
-const ValType{T} = Union{T, Vector{T}} where {T<:Real}
+const ValType{T<:Real} = Union{T, Vector{T}}
 
 struct VarInput
     name::Symbol
@@ -57,13 +57,17 @@ function block(f::Function, ins, outs; ssins=ins)
     return SimpleBlock(ins, invars, ssins, outs, f)
 end
 
-(b::SimpleBlock)(x...) = b.f(x...)
+function (b::SimpleBlock)(x...)
+    out = b.f(x...)
+    # This prevents iterating over the elements of a Vector output
+    return out isa Tuple ? out : (out,)
+end
 
-function steadystate!(varvals::Dict, b::SimpleBlock)
-    vals = b.f((varvals[n] for n in b.ins)...)
+function steadystate!(varvals::AbstractDict, b::SimpleBlock)
+    vals = b((varvals[n] for n in b.ins)...)
     for (i, n) in enumerate(b.outs)
         val = get(varvals, n, nothing)
-        val isa Vector ? (val.=vals[i]) : (varvals[n] = vals[i])
+        val isa AbstractVector ? (val.=vals[i]) : (varvals[n] = vals[i])
     end
 end
 
@@ -82,3 +86,25 @@ function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,ValType{TF}}) whe
     return J
 end
 
+_shift(p::Real, s::Int, nT::Int) = p
+_shift(p::Pair{Int,<:Vector}, s::Int, nT::Int) = view(p[2], p[1]+s+1:p[1]+s+nT)
+_shift(p::Pair{Int,<:Matrix}, s::Int, nT::Int) = view(p[2], :, p[1]+s+1:p[1]+s+nT)
+
+_getval(p::Real, t::Int) = p
+_getval(p::AbstractVector, t::Int) = p[t]
+_getval(p::AbstractMatrix, t::Int) = view(p, :, t)
+
+function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
+    inpaths = ((_shift(varpaths[name(v)], shift(v), nT) for v in invars(b))...,)
+    outpaths = ((_shift(varpaths[n], 0, nT) for n in outputs(b))...,)
+    for t in 1:nT
+        vals = b((_getval(p, t) for p in inpaths)...)
+        for (i, val) in enumerate(vals)
+            if val isa AbstractVector
+                outpaths[i][:,t] .= val
+            else
+                outpaths[i][t] = val
+            end
+        end
+    end
+end
