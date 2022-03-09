@@ -60,7 +60,7 @@ function _transform!(d::IdDict, trans::Vector{Symbol}, jacs::TotalJacobian)
         irf = get(d, v, nothing)
         if irf !== nothing
             ss = varvals[v]
-            irf .= 100.0.*irf./ss .- 100.0
+            d[v] = 100.0.*(irf./ss .- 1.0)
         end
     end
 end
@@ -70,7 +70,7 @@ function _transform!(d::IdDict, trans::Bool, jacs::TotalJacobian)
         varvals = jacs.varvals
         for (v, irf) in d
             ss = varvals[v]
-            irf .= 100.0.*irf./ss .- 100.0
+            d[v] = 100.0.*(irf./ss .- 1.0)
         end
     end
 end
@@ -93,6 +93,6 @@ end
 function nlirf(jacs::TotalJacobian, shocks::ValidPathInput, endovars=nothing;
         transform=false, initials=nothing, H_U=nothing, kwargs...)
     tr = Transition(jacs, shocks, initials; H_U=H_U)
-    solve!(tr, kwargs...)
+    solve!(tr; kwargs...)
     return nlirf(tr, endovars; transform=transform), tr
 end

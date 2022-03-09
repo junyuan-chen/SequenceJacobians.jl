@@ -1,22 +1,23 @@
-const ValType{T<:Real} = Union{T, Vector{T}}
+const ValType{T<:Real} = Union{T, AbstractArray{T}}
+const ValidCache = Union{Dict{Symbol,<:AbstractArray{<:Real}},Nothing}
 
-struct VarInput
+struct VarSpec
     name::Symbol
     shift::Int
 end
 
-var(name::Symbol; shift::Int=0) = VarInput(name, shift)
-var(v::VarInput) = v
+var(name::Symbol; shift::Int=0) = VarSpec(name, shift)
+var(v::VarSpec) = v
 
 lag(name::Symbol, n=1) = var(name, shift=-n)
 lead(name::Symbol, n=1) = var(name, shift=n)
 
-name(v::VarInput) = getfield(v, :name)
-shift(v::VarInput) = getfield(v, :shift)
+name(v::VarSpec) = getfield(v, :name)
+shift(v::VarSpec) = getfield(v, :shift)
 
 name(v::Symbol) = v
 
-convert(::Type{Symbol}, v::VarInput) = v.name
+convert(::Type{Symbol}, v::VarSpec) = v.name
 
 abstract type AbstractBlock end
 
@@ -33,32 +34,48 @@ function _checkinsouts(ins, outs, ssins)
         throw(ArgumentError("an input cannot be the output of the same block"))
 end
 
-struct SimpleBlock{F<:Function} <: AbstractBlock
+struct SimpleBlock{CA<:ValidCache,F<:Function,FP<:Union{Function,Nothing}} <: AbstractBlock
     ins::Vector{Symbol}
-    invars::Vector{VarInput}
+    invars::Vector{VarSpec}
     ssins::Set{Symbol}
     outs::Vector{Symbol}
+    cache::CA
     f::F
-    function SimpleBlock(ins::Vector{Symbol}, invars::Vector{VarInput},
-            ssins::Set{Symbol}, outs::Vector{Symbol}, f::F) where F
+    posttr::FP
+    function SimpleBlock(ins::Vector{Symbol}, invars::Vector{VarSpec}, ssins::Set{Symbol},
+            outs::Vector{Symbol}, cache::CA, f::F, posttr::FP) where {CA,F,FP}
         _checkinsouts(ins, outs, ssins)
-        return new{F}(ins, invars, ssins, outs, f)
+        return new{CA,F,FP}(ins, invars, ssins, outs, cache, f, posttr)
     end
 end
 
-function block(f::Function, ins, outs; ssins=ins)
-    ins isa Union{Symbol,VarInput} && (ins = (ins,))
+function block(f::Function, ins, outs; ssins=ins, cache=nothing, posttr=nothing)
+    ins isa Union{Symbol,VarSpec} && (ins = (ins,))
     outs isa Symbol && (outs = (outs,))
-    ssins isa Union{Symbol,VarInput} && (ssins = (ssins,))
+    ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
     invars = var.(ins)
     ins = name.(invars)
     ssins = Set{Symbol}(name.(ssins))
     outs = collect(Symbol, outs)
-    return SimpleBlock(ins, invars, ssins, outs, f)
+    return SimpleBlock(ins, invars, ssins, outs, cache, f, posttr)
+end
+
+hascache(b::SimpleBlock{Nothing}) = false
+hascache(b::SimpleBlock) = true
+
+nouts(b::SimpleBlock{Nothing}) = length(b.outs)
+function nouts(b::SimpleBlock)
+    count = 0
+    for n in b.outs
+        o = get(b.cache, n, nothing)
+        l = o === nothing ? 1 : length(o)
+        count += l
+    end
+    return count
 end
 
 function (b::SimpleBlock)(x...)
-    out = b.f(x...)
+    out = hascache(b) ? b.f(b.cache, x...) : b.f(x...)
     # This prevents iterating over the elements of a Vector output
     return out isa Tuple ? out : (out,)
 end
@@ -67,7 +84,7 @@ function steadystate!(varvals::AbstractDict, b::SimpleBlock)
     vals = b((varvals[n] for n in b.ins)...)
     for (i, n) in enumerate(b.outs)
         val = get(varvals, n, nothing)
-        val isa AbstractVector ? (val.=vals[i]) : (varvals[n] = vals[i])
+        val isa AbstractArray ? copyto!(val, vals[i]) : (varvals[n] = vals[i])
     end
 end
 
@@ -76,14 +93,26 @@ function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,ValType{TF}}) whe
     vi = ins[i]
     val = varvals[vi]
     function f(x)
-        val isa Vector || (x = x[1])
         xs = (ifelse(k==i, x, varvals[ins[k]]) for k in 1:length(ins))
         return collect(Iterators.flatten(b.f(xs...)))
     end
-    x = val isa Vector ? val : [val]
-    J = Matrix{TF}(undef, length(b.outs), length(x))
-    ForwardDiff.jacobian!(J, f, x)
+    J = Matrix{TF}(undef, nouts(b), length(val))
+    if val isa AbstractArray
+        ForwardDiff.jacobian!(J, f, vec(val))
+    else
+        ForwardDiff.derivative!(J, f, val)
+    end
     return J
+end
+
+# Only the simplest case with both input and output being scalar is implemented for Shift
+function getjacmap(b::SimpleBlock{Nothing}, J::Matrix, i::Int, r::Int, ir::Int, nT::Int)
+    if size(J, 2) == 1
+        j = J[r,1]
+        return ShiftMap(Shift(shift(invars(b)[i]), j), nT), iszero(j)
+    else
+        throw(ArgumentError("nonscalar input variable is not implemented"))
+    end
 end
 
 _shift(p::Real, s::Int, nT::Int) = p
@@ -104,6 +133,17 @@ function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
                 outpaths[i][:,t] .= val
             else
                 outpaths[i][t] = val
+            end
+        end
+        if b.posttr isa Function
+            b.posttr(varpaths, t)
+        end
+    end
+    for n in outputs(b)
+        i0, path = varpaths[n]
+        if length(path) > i0+nT
+            for i in i0+nT+1:length(path)
+                path[i] = path[i0+nT]
             end
         end
     end

@@ -18,7 +18,7 @@ export Shift,
        Lead,
        ShiftMap,
 
-       VarInput,
+       VarSpec,
        var,
        lag,
        lead,

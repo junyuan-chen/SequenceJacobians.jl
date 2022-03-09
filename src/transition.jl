@@ -8,14 +8,14 @@ struct Transition{TF<:AbstractFloat}
     exovars::Vector{Symbol}
     unknowns::Vector{Symbol}
     varpaths::Dict{Symbol,PathType{TF}}
-    H_U::LU{TF,Matrix{TF}}
+    H_U::Union{Matrix{TF},LU{TF,Matrix{TF}}}
     upaths::Vector{TF}
     resids::Vector{TF}
 end
 
 function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
         initials::Union{ValidPathInput,Nothing}=nothing;
-        H_U::Union{LU,Nothing}=nothing) where TF
+        H_U::Union{LU,Nothing}=nothing, solveH_U::Bool=true) where TF
     nT = jacs.nT
     varvals = jacs.varvals
     exopaths isa Pair && (exopaths = (exopaths,))
@@ -57,9 +57,10 @@ function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
     nU = length(unknowns)
     ntar = length(jacs.tars)
     if H_U === nothing
+        zmap = LinearMap(UniformScaling(zero(TF)), nT)
         H_U = Matrix(hvcat(((nU for _ in 1:ntar)...,),
-            (jacs.totals[v][t] for t in jacs.tars for v in unknowns)...))
-        H_U = lu!(H_U)
+            (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in unknowns)...))
+        solveH_U && (H_U = lu!(H_U))
     end
     for blk in jacs.blks
         # Any output must have not been met before unless provided by initials
@@ -74,18 +75,12 @@ function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
             inpath = get(varpaths, n, nothing)
             if inpath === nothing
                 varpaths[n] = varvals[n]
-            else
+            elseif inpath isa Pair
                 s = shift(inv)
                 if !iszero(s)
-                    if inpath isa Pair
-                        i0 = inpath[1]
-                        inpath = inpath[2]
-                    else
-                        i0 = 0
-                    end
-                    if i0 == s
-                        continue
-                    elseif s < 0
+                    i0 = inpath[1]
+                    inpath = inpath[2]
+                    if s < 0
                         if i0 + s >= 0
                             continue
                         else
@@ -114,7 +109,7 @@ function _inputs!(tr::Transition, inputs::AbstractVector)
     @inbounds for u in tr.unknowns
         path = tr.varpaths[u]
         if path isa Pair
-            s, path = (path[1], path[2])
+            s, path = path
         else
             s = 0
         end
