@@ -1,4 +1,4 @@
-const JacType{TF<:AbstractFloat} = LinearMap{TF}
+const JacType{TF<:AbstractFloat} = Union{Matrix{TF},LinearMap{TF}}
 
 struct TotalJacobian{TF<:AbstractFloat}
     parent::SequenceSpaceModel
@@ -10,8 +10,8 @@ struct TotalJacobian{TF<:AbstractFloat}
     tars::Vector{Symbol}
     ntarsrc::Vector{Int}
     excluded::Union{Set{BlockOrVar},Nothing}
-    parts::IdDict{Symbol,Vector{Pair{Symbol,JacType{TF}}}}
-    totals::IdDict{Symbol,IdDict{Symbol,LinearMap}}
+    parts::Dict{Symbol,Dict{Symbol,Matrix{LinearMap{TF}}}}
+    totals::Dict{Symbol,Dict{Symbol,LinearMap{TF}}}
 end
 
 function TotalJacobian(m::SequenceSpaceModel, sources, targets,
@@ -28,28 +28,73 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
     excluded === nothing || (excluded = Set{BlockOrVar}(excluded))
     vars = copy(sources)
     blks = AbstractBlock[]
-    parts = IdDict{Symbol,Vector{Pair{Symbol,JacType{TF}}}}()
-    Dmap = IdDict{Symbol,LinearMap}
-    totals = IdDict{Symbol,Dmap}(u=>Dmap() for u in vars)
+    DMat = Dict{Symbol,Matrix{LinearMap{TF}}}
+    parts = Dict{Symbol,DMat}()
+    DMap = Dict{Symbol,LinearMap{TF}}
+    totals = Dict{Symbol,DMap}(u=>DMap() for u in vars)
+    zmap = LinearMap(UniformScaling(zero(TF)), nT)
     for v in m.order
         isblock(m, v) || continue
         blk = m.pool[v]
         excluded !== nothing && blk in excluded && continue
         pushed = false
+        # Compute direct Jacobians for each input-output pair
         for (i, vi) in enumerate(inputs(blk))
+            # Only need variables that are reachable from sources
             if vi in vars
                 J = jacobian(blk, i, varvals)
-                # Track the first row in Jacobian matrix in case vo is an array
-                ir = 1
+                r0next = 0
                 for (r, vo) in enumerate(outputs(blk))
+                    # Input/output variable could be an array
+                    Ni = length(varvals[vi])
+                    No = outlength(blk, r)
+                    # Make sure r0 is updated even if the iteration is skipped
+                    r0 = r0next
+                    r0next += No
                     excluded !== nothing && vo in excluded && continue
-                    js = get!(valtype(parts), parts, vo)
-                    j, isz = getjacmap(blk, J, i, r, ir, nT)
-                    ir += Int(size(j, 1) / nT)
-                    push!(js, vi=>j)
-                    # Do not proceed from zeros
-                    isz && continue
+                    jo = get!(DMat, parts, vo)
+                    mj = get(jo, vi, nothing)
+                    for ii in 1:Ni
+                        for rr in 1:No
+                            j, isz = getjacmap(blk, J, i, ii, r, r0+rr, nT)
+                            isz && continue
+                            # Create the array mj only when nonzero map is encountered
+                            if mj === nothing
+                                mj = Matrix{LinearMap{TF}}(undef, No, Ni)
+                                fill!(mj, zmap)
+                                jo[vi] = mj
+                            end
+                            # j0 might be nonzero if multiple temporal inputs exist
+                            j0 = mj[rr,ii]
+                            # Replace zmap so that it is not accumulated
+                            mj[rr,ii] = j0 === zmap ? j : j0+j
+                        end
+                    end
+                    # Do not bring zeros into total Jacobians
+                    mj === nothing && continue
                     push!(vars, vo)
+                    if !pushed
+                        push!(blks, blk)
+                        pushed = true
+                    end
+                end
+            end
+        end
+        # Assemble maps for the total Jacobians
+        # Jacobians from multiple temporal inputs are already combined
+        for vi in unique(inputs(blk))
+            if vi in vars
+                for vo in outputs(blk)
+                    excluded !== nothing && vo in excluded && continue
+                    mj = get(parts[vo], vi, nothing)
+                    mj === nothing && continue
+                    No, Ni = size(mj)
+                    if Ni == 1 && No == 1
+                        map = mj[1]
+                    else
+                        map = hvcat(((Ni for _ in 1:No)...,),
+                            (mj[rr,ii] for rr in 1:No for ii in 1:Ni)...)
+                    end
                     # Handle the case when vi is a source of the DAG
                     unknown = get(totals, vi, nothing)
                     # If vi is not a source
@@ -58,22 +103,19 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                         for d in values(totals)
                             maplast = get(d, vi, nothing)
                             if maplast !== nothing
-                                jcomp = j * maplast
-                                # vo may exist when temporal terms are involved
-                                map = get(d, vo, nothing)
-                                d[vo] = map === nothing ? jcomp : map+jcomp
+                                # Maps from multiple temporal terms are already summed in mj
+                                mcomp = map * maplast
+                                # Combine possibly multiple channels
+                                map0 = get(d, vo, nothing)
+                                d[vo] = map0 === nothing ? mcomp : mcomp + map0
                             end
                         end
                     # If vi is a source
                     else
-                        # vo may exist when temporal terms are involved
-                        map = get(unknown, vo, nothing)
-                        unknown[vo] = map === nothing ? j : map+j
+                        # Combine possibly multiple channels
+                        map0 = get(unknown, vo, nothing)
+                        unknown[vo] = map0 === nothing ? map : map + map0
                     end
-                end
-                if !pushed
-                    push!(blks, blk)
-                    pushed = true
                 end
             end
         end
@@ -87,8 +129,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
             end
         end
     end
-    any(ntarsrc.<1) &&
-        @warn "not all targets are reachable from at least two sources"
+    any(ntarsrc.<2) && @warn "not all targets are reachable from at least two sources"
     return TotalJacobian(m, blks, vars, varvals, nT, sources, targets, ntarsrc, excluded, parts, totals)
 end
 
@@ -96,11 +137,13 @@ struct GEJacobian{TF<:AbstractFloat}
     jacs::TotalJacobian{TF}
     exovars::Vector{Symbol}
     unknowns::Vector{Symbol}
-    H_U::Union{LU{TF, Matrix{TF}},Nothing}
-    Gs::IdDict{Symbol,IdDict{Symbol,Union{Matrix{TF},LinearMap{TF}}}}
+    H_U::Union{Matrix{TF}, Nothing}
+    factor::Union{LU{TF, Matrix{TF}},Nothing}
+    Gs::Dict{Symbol,Dict{Symbol,JacType{TF}}}
 end
 
-function GEJacobian(jacs::TotalJacobian{TF}, exovars; keepH_U::Bool=false) where TF
+function GEJacobian(jacs::TotalJacobian{TF}, exovars;
+        keepH_U::Bool=false, keepfactor::Bool=false) where TF
     exovars isa Symbol && (exovars = (exovars,))
     isempty(exovars) && throw(ArgumentError("exovars cannot be empty"))
     for var in exovars
@@ -117,23 +160,32 @@ function GEJacobian(jacs::TotalJacobian{TF}, exovars; keepH_U::Bool=false) where
         (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in unknowns)...))
     H_Z = Matrix(hvcat(((nZ for _ in 1:ntar)...,),
         (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in exovars)...))
+    keepH_U && (hu = copy(H_U))
     H_U = lu!(H_U)
     ldiv!(H_U, H_Z)
     G_U = H_Z
     G_U .*= -one(eltype(G_U))
-    Gs = IdDict{Symbol,IdDict{Symbol,Union{Matrix{TF},LinearMap{TF}}}}()
-    for (j, z) in enumerate(exovars)
-        Gs[z] = IdDict{Symbol,Union{Matrix{TF},LinearMap{TF}}}()
-        for (i, u) in enumerate(unknowns)
-            Gs[z][u] = G_U[1+(i-1)*nT:i*nT, 1+(j-1)*nT:j*nT]
+    Gs = Dict{Symbol,Dict{Symbol,JacType{TF}}}()
+    j0 = 0
+    for z in exovars
+        Gs[z] = Dict{Symbol,JacType{TF}}()
+        Nz = length(jacs.varvals[z])
+        i0 = 0
+        for u in unknowns
+            Nu = length(jacs.varvals[u])
+            Gs[z][u] = G_U[i0+1:i0+Nu*nT, j0+1:j0+Nz*nT]
+            i0 += Nu*nT
         end
+        j0 += Nz*nT
     end
-    return GEJacobian(jacs, exovars, unknowns, keepH_U ? H_U : nothing, Gs)
+    return GEJacobian(jacs, exovars, unknowns,
+        keepH_U ? hu : nothing, keepfactor ? H_U : nothing, Gs)
 end
 
 function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     z = get(gejac.Gs, exovar, nothing)
     z === nothing && throw(ArgumentError("$exovar is not an exogenous variable"))
+    # G is readily available if endovar is a source
     G = get(z, endovar, nothing)
     if G === nothing
         # endovar does not have to be a source
@@ -143,9 +195,11 @@ function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
         M_U = LinearMap(UniformScaling(zero(TF)), gejac.jacs.nT)
         M_Z = M_U
         for (u, ms) in gejac.jacs.totals
+            # Direct effect of exovar
             if u === exovar
                 M = get(ms, endovar, nothing)
                 M === nothing || (M_Z = M)
+            # Indirect effect via other sources
             else
                 M_u = get(ms, endovar, nothing)
                 M_u === nothing && continue

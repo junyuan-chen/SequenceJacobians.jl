@@ -1,4 +1,4 @@
-function _transform!(d::IdDict, trans::Vector{Symbol}, gejac::GEJacobian)
+function _transform!(d::Dict, trans::Vector{Symbol}, gejac::GEJacobian)
     varvals = gejac.jacs.varvals
     for irfs in values(d)
         for v in trans
@@ -11,7 +11,7 @@ function _transform!(d::IdDict, trans::Vector{Symbol}, gejac::GEJacobian)
     end
 end
 
-function _transform!(d::IdDict, trans::Bool, gejac::GEJacobian)
+function _transform!(d::Dict, trans::Bool, gejac::GEJacobian)
     if trans
         varvals = gejac.jacs.varvals
         for irfs in values(d)
@@ -31,10 +31,10 @@ function linirf(gejac::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing
     endovars === nothing && (endovars = setdiff(jacs.vars, gejac.exovars, jacs.tars))
     isempty(endovars) && throw(ArgumentError("endovars cannot be empty"))
     nT = jacs.nT
-    out = IdDict{Symbol,IdDict{Symbol,VecOrMat{TF}}}()
+    out = Dict{Symbol,Dict{Symbol,VecOrMat{TF}}}()
     for (exo, dZ) in dshocks
         size(dZ,1) == nT || throw(ArgumentError("the length of shock $exo is not $nT"))
-        d = IdDict{Symbol,VecOrMat{TF}}()
+        d = Dict{Symbol,VecOrMat{TF}}()
         out[exo] = d
         for endo in endovars
             G = getG!(gejac, exo, endo)
@@ -54,7 +54,7 @@ function linirf(jacs::TotalJacobian, dshocks::ValidPathInput, endovars=nothing;
     return irfs, gejac
 end
 
-function _transform!(d::IdDict, trans::Vector{Symbol}, jacs::TotalJacobian)
+function _transform!(d::Dict, trans::Vector{Symbol}, jacs::TotalJacobian)
     varvals = jacs.varvals
     for v in trans
         irf = get(d, v, nothing)
@@ -65,7 +65,7 @@ function _transform!(d::IdDict, trans::Vector{Symbol}, jacs::TotalJacobian)
     end
 end
 
-function _transform!(d::IdDict, trans::Bool, jacs::TotalJacobian)
+function _transform!(d::Dict, trans::Bool, jacs::TotalJacobian)
     if trans
         varvals = jacs.varvals
         for (v, irf) in d
@@ -80,7 +80,7 @@ function nlirf(tr::Transition{TF}, endovars=nothing; transform=false) where TF
     endovars isa Symbol && (endovars = (endovars,))
     endovars === nothing && (endovars = setdiff(jacs.vars, tr.exovars, jacs.tars))
     isempty(endovars) && throw(ArgumentError("endovars cannot be empty"))
-    out = IdDict{Symbol,VecOrMat{TF}}()
+    out = Dict{Symbol,VecOrMat{TF}}()
     for endo in endovars
         path = get(tr.varpaths, endo, nothing)
         path === nothing && throw(ArgumentError("$endo is not an endogenous variable"))

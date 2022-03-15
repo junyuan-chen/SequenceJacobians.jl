@@ -34,22 +34,21 @@ function _checkinsouts(ins, outs, ssins)
         throw(ArgumentError("an input cannot be the output of the same block"))
 end
 
-struct SimpleBlock{CA<:ValidCache,F<:Function,FP<:Union{Function,Nothing}} <: AbstractBlock
+struct SimpleBlock{CA<:ValidCache,F<:Function} <: AbstractBlock
     ins::Vector{Symbol}
     invars::Vector{VarSpec}
     ssins::Set{Symbol}
     outs::Vector{Symbol}
     cache::CA
     f::F
-    posttr::FP
     function SimpleBlock(ins::Vector{Symbol}, invars::Vector{VarSpec}, ssins::Set{Symbol},
-            outs::Vector{Symbol}, cache::CA, f::F, posttr::FP) where {CA,F,FP}
+            outs::Vector{Symbol}, cache::CA, f::F) where {CA,F}
         _checkinsouts(ins, outs, ssins)
-        return new{CA,F,FP}(ins, invars, ssins, outs, cache, f, posttr)
+        return new{CA,F}(ins, invars, ssins, outs, cache, f)
     end
 end
 
-function block(f::Function, ins, outs; ssins=ins, cache=nothing, posttr=nothing)
+function block(f::Function, ins, outs; ssins=ins, cache=nothing)
     ins isa Union{Symbol,VarSpec} && (ins = (ins,))
     outs isa Symbol && (outs = (outs,))
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
@@ -57,7 +56,7 @@ function block(f::Function, ins, outs; ssins=ins, cache=nothing, posttr=nothing)
     ins = name.(invars)
     ssins = Set{Symbol}(name.(ssins))
     outs = collect(Symbol, outs)
-    return SimpleBlock(ins, invars, ssins, outs, cache, f, posttr)
+    return SimpleBlock(ins, invars, ssins, outs, cache, f)
 end
 
 hascache(b::SimpleBlock{Nothing}) = false
@@ -72,6 +71,13 @@ function nouts(b::SimpleBlock)
         count += l
     end
     return count
+end
+
+outlength(b::SimpleBlock{Nothing}, r::Int) = 1
+
+function outlength(b::SimpleBlock, r::Int)
+    out = get(b.cache, outputs(b)[r], nothing)
+    return out === nothing ? 1 : length(out)
 end
 
 function (b::SimpleBlock)(x...)
@@ -105,14 +111,10 @@ function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,ValType{TF}}) whe
     return J
 end
 
-# Only the simplest case with both input and output being scalar is implemented for Shift
-function getjacmap(b::SimpleBlock{Nothing}, J::Matrix, i::Int, r::Int, ir::Int, nT::Int)
-    if size(J, 2) == 1
-        j = J[r,1]
-        return ShiftMap(Shift(shift(invars(b)[i]), j), nT), iszero(j)
-    else
-        throw(ArgumentError("nonscalar input variable is not implemented"))
-    end
+function getjacmap(b::SimpleBlock{Nothing}, J::Matrix,
+        i::Int, ii::Int, r::Int, rr::Int, nT::Int)
+    j = J[rr,ii]
+    return ShiftMap(Shift(shift(invars(b)[i]), j), nT), iszero(j)
 end
 
 _shift(p::Real, s::Int, nT::Int) = p
@@ -133,17 +135,6 @@ function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
                 outpaths[i][:,t] .= val
             else
                 outpaths[i][t] = val
-            end
-        end
-        if b.posttr isa Function
-            b.posttr(varpaths, t)
-        end
-    end
-    for n in outputs(b)
-        i0, path = varpaths[n]
-        if length(path) > i0+nT
-            for i in i0+nT+1:length(path)
-                path[i] = path[i0+nT]
             end
         end
     end

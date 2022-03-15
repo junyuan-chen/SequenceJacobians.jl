@@ -175,7 +175,7 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
     vars = Symbol[v for v in m.pool if v isa Symbol]
     varvals = Dict{Symbol,ValType{TF}}()
     # Assign initials to varvals helps look up assigned values when filling inits
-    # This is also the way to tell whether any unknown variable is a Vector
+    # This is also the way to tell whether any unknown variable is an Array
     if initials !== nothing
         for (k, v) in initials
             varvals[k] = v
