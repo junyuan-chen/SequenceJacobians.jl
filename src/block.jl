@@ -1,5 +1,5 @@
 const ValType{T<:Real} = Union{T, AbstractArray{T}}
-const ValidCache = Union{Dict{Symbol,<:AbstractArray{<:Real}},Nothing}
+const ValidCache = Union{Dict{Symbol},Nothing}
 
 struct VarSpec
     name::Symbol
@@ -26,6 +26,25 @@ invars(b::AbstractBlock) = getfield(b, :invars)
 ssinputs(b::AbstractBlock) = getfield(b, :ssins)
 outputs(b::AbstractBlock) = getfield(b, :outs)
 
+function _countcache(cache::ValidCache, outs::Vector{Symbol})
+    count = 0
+    for n in outs
+        o = get(cache, n, nothing)
+        l = o === nothing ? 1 : length(o)
+        count += l
+    end
+    return count
+end
+
+hascache(b::AbstractBlock) = hasfield(typeof(b), :cache) && b.cache isa Dict
+nouts(b::AbstractBlock) = hascache(b) ? _countcache(b.cache, outputs(b)) : length(outputs(b))
+
+function outlength(b::AbstractBlock, r::Int)
+    hascache(b) || return 1
+    out = get(b.cache, outputs(b)[r], nothing)
+    return out === nothing ? 1 : length(out)
+end
+
 function _checkinsouts(ins, outs, ssins)
     length(ins) > 0 || throw(ArgumentError("the inputs of a block cannot be empty"))
     length(outs) > 0 || throw(ArgumentError("the outputs of a block cannot be empty"))
@@ -48,7 +67,7 @@ struct SimpleBlock{CA<:ValidCache,F<:Function} <: AbstractBlock
     end
 end
 
-function block(f::Function, ins, outs; ssins=ins, cache=nothing)
+function _inout(ins, outs, ssins)
     ins isa Union{Symbol,VarSpec} && (ins = (ins,))
     outs isa Symbol && (outs = (outs,))
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
@@ -56,29 +75,15 @@ function block(f::Function, ins, outs; ssins=ins, cache=nothing)
     ins = name.(invars)
     ssins = Set{Symbol}(name.(ssins))
     outs = collect(Symbol, outs)
-    return SimpleBlock(ins, invars, ssins, outs, cache, f)
+    return ins, invars, ssins, outs
 end
+
+block(f::Function, ins, outs; ssins=ins, cache=nothing) =
+    SimpleBlock(_inout(ins, outs, ssins)..., cache, f)
 
 hascache(b::SimpleBlock{Nothing}) = false
-hascache(b::SimpleBlock) = true
-
 nouts(b::SimpleBlock{Nothing}) = length(b.outs)
-function nouts(b::SimpleBlock)
-    count = 0
-    for n in b.outs
-        o = get(b.cache, n, nothing)
-        l = o === nothing ? 1 : length(o)
-        count += l
-    end
-    return count
-end
-
 outlength(b::SimpleBlock{Nothing}, r::Int) = 1
-
-function outlength(b::SimpleBlock, r::Int)
-    out = get(b.cache, outputs(b)[r], nothing)
-    return out === nothing ? 1 : length(out)
-end
 
 function (b::SimpleBlock)(x...)
     out = hascache(b) ? b.f(b.cache, x...) : b.f(x...)
@@ -86,9 +91,9 @@ function (b::SimpleBlock)(x...)
     return out isa Tuple ? out : (out,)
 end
 
-function steadystate!(varvals::AbstractDict, b::SimpleBlock)
-    vals = b((varvals[n] for n in b.ins)...)
-    for (i, n) in enumerate(b.outs)
+function steadystate!(b::SimpleBlock, varvals::AbstractDict)
+    vals = b((varvals[n] for n in inputs(b))...)
+    for (i, n) in enumerate(outputs(b))
         val = get(varvals, n, nothing)
         val isa AbstractArray ? copyto!(val, vals[i]) : (varvals[n] = vals[i])
     end

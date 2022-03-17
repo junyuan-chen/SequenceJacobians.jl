@@ -135,7 +135,7 @@ function _collapse!(m::SequenceSpaceModel, calis::Dict, varvals::Dict)
                     break
                 end
             end
-            steadystate!(varvals, b)
+            steadystate!(b, varvals)
         else
             var = m.pool[v]
             cali = get(calis, var, nothing)
@@ -254,7 +254,7 @@ end
 
 function residuals!(resids::AbstractVector, ss::SteadyState)
     for b in ss.blks
-        steadystate!(ss.varvals, b)
+        steadystate!(b, ss.varvals)
     end
     _resids!(resids, ss)
     return resids

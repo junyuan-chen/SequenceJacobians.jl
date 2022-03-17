@@ -13,7 +13,11 @@ import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
 
-export Shift,
+export linfconverged,
+       interpolate_y!,
+       interpolate_coord!,       
+
+       Shift,
        Lag,
        Lead,
        ShiftMap,
@@ -29,6 +33,9 @@ export Shift,
        invars,
        ssinputs,
        outputs,
+       hascache,
+       nouts,
+       outlength,
        SimpleBlock,
        block,
        steadystate!,
@@ -57,11 +64,16 @@ export Shift,
        linirf,
        nlirf
 
+include("utils.jl")
 include("shift.jl")
-include("blocks.jl")
+include("block.jl")
+include("hetblock.jl")
 include("model.jl")
 include("jacobian.jl")
 include("transition.jl")
 include("irf.jl")
+include("example/utils.jl")
+include("example/rbc.jl")
+include("example/KrusellSmith.jl")
 
 end # module
