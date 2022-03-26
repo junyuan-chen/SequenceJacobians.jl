@@ -2,8 +2,10 @@ module SequenceJacobians
 
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: I, UniformScaling, LU, lu!, ldiv!, norm
+using LinearAlgebra: I, UniformScaling, LU, lu!, ldiv!, norm, dot
 using LinearMaps
+using SplitApplyCombine: splitdimsview
+using Tullio: @tullio
 
 import Base: ==, eltype, zero, show, convert
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
@@ -13,7 +15,7 @@ import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
 
-export linfconverged,
+export supconverged,
        interpolate_y!,
        interpolate_coord!,       
 
@@ -53,12 +55,50 @@ export linfconverged,
        residuals!,
        criterion!,
 
+       AbstractHetAgent,
+       HetAgentStyle,
+       TimeDiscrete,
+       endostates,
+       getendo,
+       endopolicies,
+       exogstates,
+       getexog,
+       statevars,
+       valuevars,
+       getvalue,
+       getexpectedvalue,
+       policies,
+       getpolicy,
+       getlastpolicy,
+       getdist,
+       getlastdist,
+       getdisttemp,
+       update!,
+       backward!,
+       backward_steadystate!,
+       backward_init!,
+       backward_status,
+       backward_converged,
+       forward!,
+       forward_steadystate!,
+       forward_init!,
+       forward_status,
+       forward_converged,
+       aggregate,
+
+       AbstractLawOfMotion,
+       grid,
+       DiscreteTimeLawOfMotion,
+       ExogProc,
+       rouwenhorstexp,
+       EndoProc,
+       assetproc,
+
        TotalJacobian,
        GEJacobian,
        getG!,
 
        Transition,
-       update!,
        solve!,
 
        linirf,
@@ -67,6 +107,8 @@ export linfconverged,
 include("utils.jl")
 include("shift.jl")
 include("block.jl")
+include("hetagent.jl")
+include("lawofmotion.jl")
 include("hetblock.jl")
 include("model.jl")
 include("jacobian.jl")

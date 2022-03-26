@@ -1,16 +1,68 @@
 """
-    linfconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
+    supconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
 
 Assess convergence by determining whether
 the largest absolute difference between corresponding elements in `A` and `B`
 is no greater than `tol`.
 """
-function linfconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
+function supconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
     length(A) == length(B) || throw(ArgumentError("the two arrays must have the same length"))
     @inbounds for i in 1:length(A)
         abs(A[i]-B[i]) > tol && return false
     end
     return true
+end
+
+_variance(x::AbstractArray, pr::AbstractArray) = sum(pr.*(x.-sum(pr.*x)).^2)
+
+# From QuantEcon.jl
+function _rouwenhorst(p::Real, q::Real, m::Real, Δ::Real, n::Integer)
+    if n == 2
+        return [m-Δ, m+Δ],  [p 1-p; 1-q q]
+    else
+        _, θ_nm1 = _rouwenhorst(p, q, m, Δ, n-1)
+        θN = p    *[θ_nm1 zeros(n-1, 1); zeros(1, n)] +
+             (1-p)*[zeros(n-1, 1) θ_nm1; zeros(1, n)] +
+             q    *[zeros(1, n); zeros(n-1, 1) θ_nm1] +
+             (1-q)*[zeros(1, n); θ_nm1 zeros(n-1, 1)]
+
+        θN[2:end-1, :] ./= 2
+
+        return range(m-Δ, stop=m+Δ, length=n), θN
+    end
+end
+
+# From QuantEcon.jl
+function gth_solve!(A::Matrix{T}) where T<:Real
+    n = size(A, 1)
+    x = zeros(T, n)
+
+    @inbounds for k in 1:n-1
+        scale = sum(A[k, k+1:n])
+        if scale <= zero(T)
+            # There is one (and only one) recurrent class contained in
+            # {1, ..., k};
+            # compute the solution associated with that recurrent class.
+            n = k
+            break
+        end
+        A[k+1:n, k] /= scale
+
+        for j in k+1:n, i in k+1:n
+            A[i, j] += A[i, k] * A[k, j]
+        end
+    end
+
+    # backsubstitution
+    x[n] = 1
+    @inbounds for k in n-1:-1:1, i in k+1:n
+        x[k] += x[i] * A[i, k]
+    end
+
+    # normalisation
+    x /= sum(x)
+
+    return x
 end
 
 Base.@propagate_inbounds function _interpolate(x, xq, i, k, K)
@@ -57,8 +109,8 @@ The implementation mostly follows the corresponding method in the original Pytho
 See also [`interpolate_y!`](@ref).
 """
 function interpolate_coord!(xqi::AbstractArray, xqpi::AbstractArray, xq::AbstractVector, x::AbstractVector)
-    size(xqi) == size(xqpi) == size(xq) ||
-        throw(ArgumentError("size of xqi, xqpi and xq must be the same"))
+    length(xqi) == length(xqpi) == length(xq) ||
+        throw(ArgumentError("length of xqi, xqpi and xq must be the same"))
     issorted(x) || (x = sort(x))
     isorted = issorted(xq) ? (1:length(xq)) : sortperm(xq)
     K = length(x)
@@ -71,27 +123,5 @@ function interpolate_coord!(xqi::AbstractArray, xqpi::AbstractArray, xq::Abstrac
         xqi[i] = k
     end
     return xqi, xqpi
-end
-
-"""
-    _eachslice(A::AbstractArray)
-
-A variant of `eachslice` for iterating over the last dimension of `A`.
-"""
-@inline function _eachslice(A::AbstractArray)
-    ndim = ndims(A)
-    inds_before = ntuple(d->(:), ndim-1)
-    return (view(A, inds_before..., i) for i in axes(A, ndim))
-end
-
-"""
-    _viewslice(A::AbstractArray, i::Int)
-
-View the `i`th slice across the last dimension of `A`.
-"""
-@inline function _viewslice(A::AbstractArray, i::Int)
-    ndim = ndims(A)
-    inds_before = ntuple(d->(:), ndim-1)
-    return view(A, inds_before..., i)
 end
 

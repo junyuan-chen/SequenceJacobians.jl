@@ -92,19 +92,21 @@ function (b::SimpleBlock)(x...)
 end
 
 function steadystate!(b::SimpleBlock, varvals::AbstractDict)
-    vals = b((varvals[n] for n in inputs(b))...)
+    ins = inputs(b)
+    vals = b(ntuple(i->varvals[ins[i]], length(ins))...)
     for (i, n) in enumerate(outputs(b))
         val = get(varvals, n, nothing)
         val isa AbstractArray ? copyto!(val, vals[i]) : (varvals[n] = vals[i])
     end
 end
 
-function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,ValType{TF}}) where TF
+function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,<:ValType{TF}}) where TF
     ins = inputs(b)
     vi = ins[i]
     val = varvals[vi]
     function f(x)
-        xs = (ifelse(k==i, x, varvals[ins[k]]) for k in 1:length(ins))
+        xs = (ntuple(k->varvals[ins[k]], i-1)..., x,
+            ntuple(k->varvals[ins[k+i]], length(ins)-i)...)
         return collect(Iterators.flatten(b.f(xs...)))
     end
     J = Matrix{TF}(undef, nouts(b), length(val))

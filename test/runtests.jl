@@ -9,6 +9,7 @@ using SequenceJacobians: ValType
 const tests = [
     "utils",
     "shift",
+    "lawofmotion",
     "blocks",
     "model",
     "jacobian"

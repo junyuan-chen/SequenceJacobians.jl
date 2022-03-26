@@ -25,6 +25,16 @@
     b = block(mkt_clearing,
         [:r, lead(:r), :C, lead(:C), :Y, :I, :K, lag(:K), :L, :w, :eis, :β], outs)
     @test inputs(b) == ins
+
+    bfirm, bhh, bmkt, bss = rbcblocks()
+    varvals = Dict{Symbol,Float64}(:K=>2,:L=>1,:w=>1,:eis=>1,:frisch=>1,:φ=>0.9,:δ=>0.025)
+    steadystate!(bhh, varvals)
+    @test varvals[:C] ≈ 1.1111111111111112
+    @test varvals[:I] ≈ 0.05
+
+    @test jacobian(bhh, 1, varvals) ≈ [0, 1]
+    @test jacobian(bhh, 2, varvals) ≈ [0, -0.975]
+    @test jacobian(bhh, 8, varvals) ≈ [0, 2]
 end
 
 @testset "HetBlock" begin
