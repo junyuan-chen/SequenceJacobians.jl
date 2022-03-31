@@ -1,10 +1,12 @@
 module SequenceJacobians
 
+using FiniteDiff: finite_difference_gradient!, GradientCache
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: I, UniformScaling, LU, lu!, ldiv!, norm, dot
+using LinearAlgebra: BLAS, I, UniformScaling, LU, lu!, ldiv!, norm, dot, stride1
 using LinearMaps
 using SplitApplyCombine: splitdimsview
+using Statistics: mean
 using Tullio: @tullio
 
 import Base: ==, eltype, zero, show, convert
@@ -17,7 +19,8 @@ export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex
 
 export supconverged,
        interpolate_y!,
-       interpolate_coord!,       
+       interpolate_coord!,
+       setmin!,
 
        Shift,
        Lag,
@@ -72,9 +75,10 @@ export supconverged,
        getlastpolicy,
        getdist,
        getlastdist,
-       getdisttemp,
+       getdistendo,
        update!,
        backward!,
+       backward_endo!,
        backward_steadystate!,
        backward_init!,
        backward_status,

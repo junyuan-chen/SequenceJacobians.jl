@@ -3,9 +3,8 @@ module KrusellSmith
 using ..SequenceJacobians
 using ..SequenceJacobians.RBC: firm
 using ..SequenceJacobians.ExampleUtils
-using LinearAlgebra: dot, mul!
 
-import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies, backward_init!, update!
+import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies, backward_init!, backward_endo!
 
 export kshhblock, ksblocks
 
@@ -22,7 +21,7 @@ struct KSHousehold{TF<:AbstractFloat} <: AbstractHetAgent
     Va::Matrix{TF}
     EVa::Matrix{TF}
     D::Matrix{TF}
-    Dtemp::Matrix{TF}
+    Dendo::Matrix{TF}
     Dlast::Matrix{TF}
 end
 
@@ -58,16 +57,16 @@ function backward_init!(h::KSHousehold, r, w, β, eis)
     h.Va .= (1 + r) .* (0.1 .* h.coh).^(-1/eis)
 end
 
-function update!(h::KSHousehold, r, w, β, eis)
+function backward_endo!(h::KSHousehold, EVa, r, w, β, eis)
     agrid = grid(h.aproc)
-    h.cnext .= (β.*h.EVa).^(-eis)
+    h.cnext .= (β.*EVa).^(-eis)
     h.coh .= (1 + r) .* agrid .+ w .* grid(h.eproc)'
     h.cohnext .= h.cnext .+ agrid
     for i in 1:length(grid(h.eproc))
         interpolate_y!(view(h.a,:,i), view(h.coh,:,i), agrid, view(h.cohnext,:,i))
     end
     # Ensure that asset is always nonnegative
-    h.a[h.a.<agrid[1]] .= agrid[1]
+    setmin!(h.a, agrid[1])
     h.c .= h.coh .- h.a
     h.Va .= (1 + r).*h.c.^(-1/eis)
     # It does not matter which variable is returned

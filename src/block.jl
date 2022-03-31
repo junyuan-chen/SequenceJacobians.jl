@@ -1,4 +1,4 @@
-const ValType{T<:Real} = Union{T, AbstractArray{T}}
+const ValType{T} = Union{T, AbstractArray{T}} where {T<:Real}
 const ValidCache = Union{Dict{Symbol},Nothing}
 
 struct VarSpec
@@ -100,7 +100,8 @@ function steadystate!(b::SimpleBlock, varvals::AbstractDict)
     end
 end
 
-function jacobian(b::SimpleBlock, i::Int, varvals::Dict{Symbol,<:ValType{TF}}) where TF
+function jacobian(b::SimpleBlock, i::Int, nT::Int,
+        varvals::Dict{Symbol,<:ValType{TF}}) where TF
     ins = inputs(b)
     vi = ins[i]
     val = varvals[vi]

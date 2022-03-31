@@ -60,7 +60,7 @@ end
 
 Compute the expected values `ev` over the state space
 given the realized values `v` in the next period and
-the law of motion of exogenous states `ps`.
+the exogenous law of motion `ps`.
 """
 backward!(ev::AbstractMatrix, v::AbstractMatrix, p::ExogProc) = mul!(ev, v, p.m')
 
@@ -195,6 +195,82 @@ function update!(p::EndoProc, i::Int, a::AbstractArray)
 end
 
 """
+    backward!(ev::AbstractArray, v::AbstractArray, ps::EndoProc...)
+
+Compute the expected values `ev` over the state space
+given the realized values `v` in the next period and
+the endogenous law of motion `ps`.
+"""
+function backward!(ev::AbstractArray, v::AbstractArray, p::EndoProc)
+    size(ev) == size(v) || throw(DimensionMismatch(
+        "size of ev $(size(ev)) does not match size of v $(size(v))"))
+    N = ndims(ev)
+    Nexog = N - 1
+    if Nexog > 0
+        dims = (2:N...,)
+        vevs = splitdimsview(ev, dims)
+        vvs = splitdimsview(v, dims)
+        vlis = splitdimsview(p.li, dims)
+        vlps = splitdimsview(p.lp, dims)
+        for (vev, vv, vli, vlp) in zip(vevs, vvs, vlis, vlps)
+            backward_endo!(vev, vv, vli, vlp)
+        end
+    else
+        backward_endo!(ev, v, p.li, p.lp)
+    end
+end
+
+function backward!(ev::AbstractArray, v::AbstractArray, p1::EndoProc, p2::EndoProc)
+    size(ev) == size(v) || throw(DimensionMismatch(
+        "size of ev $(size(ev)) does not match size of v $(size(v))"))
+    N = ndims(ev)
+    Nexog = N - 2
+    if Nexog > 0
+        dims = (3:N...,)
+        vevs = splitdimsview(ev, dims)
+        vvs = splitdimsview(v, dims)
+        vli1s = splitdimsview(p1.li, dims)
+        vlp1s = splitdimsview(p1.lp, dims)
+        vli2s = splitdimsview(p2.li, dims)
+        vlp2s = splitdimsview(p2.lp, dims)
+        for (vev, vv, vli1, vlp1, vli2, vlp2) in zip(vevs, vvs, vli1s, vlp1s, vli2s, vlp2s)
+            backward_endo!(vev, vv, vli1, vlp1, vli2, vlp2)
+        end
+    else
+        backward_endo!(ev, v, p1.li, p1.lp, p2.li, p2.lp)
+    end
+end
+
+function backward_endo!(ev::AbstractVector, v::AbstractVector,
+        lis::AbstractVector, lps::AbstractVector)
+    N = length(ev)
+    fill!(ev, zero(eltype(ev)))
+    @inbounds for i in 1:N
+        li = lis[i]
+        lp = lps[i]
+        ev[i] = lp * v[li] + (1.0-lp) * v[li+1]
+    end
+    return ev
+end
+
+function backward_endo!(ev::AbstractMatrix, v::AbstractMatrix,
+        li1s::AbstractMatrix, lp1s::AbstractMatrix, li2s::AbstractMatrix, lp2s::AbstractMatrix)
+    N1, N2 = size(ev)
+    fill!(ev, zero(eltype(ev)))
+    @inbounds for j in 1:N2
+        for i in 1:N1
+            li1 = li1s[i,j]
+            lp1 = lp1s[i,j]
+            li2 = li2s[i,j]
+            lp2 = lp2s[i,j]
+            ev[i,j] = lp1 * lp2 * v[li1,li2] + lp1 * (1.0-lp2) * v[li1,li2+1] +
+                (1.0-lp1) * lp2 * v[li1+1,li2] + (1.0-lp1) * (1.0-lp2) * v[li1+1,li2+1]
+        end
+    end
+    return ev
+end
+
+"""
     forward!(out::AbstractArray, D::AbstractArray, ps::EndoProc...)
 
 Compute the distribution of agents over the state space
@@ -238,12 +314,13 @@ function forward!(out::AbstractArray, D::AbstractArray, p1::EndoProc, p2::EndoPr
             forward_endo!(vout, vD, vli1, vlp1, vli2, vlp2)
         end
     else
-        forward_endo!(out, D, vli1, vlp1, vli2, vlp2)
+        forward_endo!(out, D, p1.li, p1.lp, p2.li, p2.lp)
     end
 end
 
-function forward_endo!(out, D, lis, lps)
-    N = length(D)
+function forward_endo!(out::AbstractVector, D::AbstractVector,
+        lis::AbstractVector, lps::AbstractVector)
+    N = length(out)
     fill!(out, zero(eltype(out)))
     @inbounds for i in 1:N
         li = lis[i]
@@ -255,7 +332,8 @@ function forward_endo!(out, D, lis, lps)
     return out
 end
 
-function forward_endo!(out, D, li1s, lp1s, li2s, lp2s)
+function forward_endo!(out::AbstractMatrix, D::AbstractMatrix,
+        li1s::AbstractMatrix, lp1s::AbstractMatrix, li2s::AbstractMatrix, lp2s::AbstractMatrix)
     N1, N2 = size(out)
     fill!(out, zero(eltype(out)))
     @inbounds for j in 1:N2
@@ -269,6 +347,88 @@ function forward_endo!(out, D, li1s, lp1s, li2s, lp2s)
             out[li1+1,li2] += d * (1.0-lp1) * lp2
             out[li1,li2+1] += d * lp1 * (1.0-lp2)
             out[li1+1,li2+1] += d * (1.0-lp1) * (1.0-lp2)
+        end
+    end
+    return out
+end
+
+# Compute curly Ds
+function forward_shock!(out::AbstractArray, D::AbstractArray, p::EndoProc, da::AbstractArray)
+    size(out) == size(D) == size(da) || throw(DimensionMismatch(
+        "size of out $(size(out)), D $(size(D)) and da $(size(da)) must be the same"))
+    N = ndims(out)
+    Nexog = N - 1
+    if Nexog > 0
+        dims = (2:N...,)
+        vouts = splitdimsview(out, dims)
+        vDs = splitdimsview(D, dims)
+        vlis = splitdimsview(p.li, dims)
+        vdas = splitdimsview(da, dims)
+        for (vout, vD, vli, vda) in zip(vouts, vDs, vlis, vdas)
+            forward_shock_endo!(vout, vD, vli, vda, p.g)
+        end
+    else
+        forward_shock_endo!(out, D, p.li, da, p.g)
+    end
+end
+
+function forward_shock!(out::AbstractArray, D::AbstractArray,
+        p1::EndoProc, p2::EndoProc, da1::AbstractArray, da2::AbstractArray)
+    size(out) == size(D) == size(da1) == size(da2) || throw(DimensionMismatch(
+        "size of out $(size(out)), D $(size(D)), da1 $(size(da1)) and da2 $(size(da2)) must be the same"))
+    N = ndims(out)
+    Nexog = N - 2
+    if Nexog > 0
+        dims = (3:N...,)
+        vouts = splitdimsview(out, dims)
+        vDs = splitdimsview(D, dims)
+        vli1s = splitdimsview(p1.li, dims)
+        vlp1s = splitdimsview(p1.lp, dims)
+        vda1s = splitdimsview(da1, dims)
+        vli2s = splitdimsview(p2.li, dims)
+        vlp2s = splitdimsview(p2.lp, dims)
+        vda2s = splitdimsview(da2, dims)
+        for (vout, vD, vli1, vlp1, vda1, vli2, vlp2, vda2) in
+                zip(vouts, vDs, vli1s, vlp1s, vda1s, vli2s, vlp2s, vda2s)
+            forward_shock_endo!(vout, vD, vli1, vlp1, vda1, vli2, vlp2, vda2, p1.g, p2.g)
+        end
+    else
+        forward_shock_endo!(out, D, p1.li, p1.lp, da1, p2.li, p2.lp, da2, p1.g, p2.g)
+    end
+end
+
+function forward_shock_endo!(out::AbstractVector, D::AbstractVector,
+        lis::AbstractVector, da::AbstractVector, g::AbstractVector)
+    N = length(out)
+    fill!(out, zero(eltype(out)))
+    @inbounds for i in 1:N
+        li = lis[i]
+        d = da[i] / (g[li+1] - g[li]) * D[i]
+        out[li] -= d
+        out[li+1] += d
+    end
+    return out
+end
+
+function forward_shock_endo!(out::AbstractMatrix, D::AbstractMatrix,
+        li1s::AbstractMatrix, lp1s::AbstractMatrix, da1::AbstractMatrix,
+        li2s::AbstractMatrix, lp2s::AbstractMatrix, da2::AbstractMatrix,
+        g1::AbstractVector, g2::AbstractVector)
+    N1, N2 = size(out)
+    fill!(out, zero(eltype(out)))
+    @inbounds for j in 1:N2
+        for i in 1:N1
+            li1 = li1s[i,j]
+            lp1 = lp1s[i,j]
+            li2 = li2s[i,j]
+            lp2 = lp2s[i,j]
+            d = D[i,j]
+            d1 = da1[i,j] / (g1[li1+1] - g1[li1]) * d
+            d2 = da2[i,j] / (g2[li2+1] - g2[li2]) * d
+            out[li1,li2] = out[li1,li2] - d1 * lp2 - lp1 * d2
+            out[li1+1,li2] = out[li1+1,li2] + d1 * lp2 - (1.0-lp1) * d2
+            out[li1,li2+1] = out[li1,li2+1] - d1 * (1.0-lp2) + lp1 * d2
+            out[li1+1,li2+1] = out[li1+1,li2+1] + d1 * (1.0-lp2) + (1.0-lp1) * d2
         end
     end
     return out

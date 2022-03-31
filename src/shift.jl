@@ -214,6 +214,10 @@ _unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVecOrMat) =
 _unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVecOrMat, α::Number, β::Number) =
     mul!(C, S.S, B, α, β)
 
+# Needed for avoiding method ambiguity
+_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector, α::Number, β::Number) =
+    mul!(C, S.S, B, α, β)
+
 (+)(S1::ShiftMap, S2::ShiftMap) =
     S1.N==S2.N ? ShiftMap(S1.S+S2.S, S1.N) : throw(DimensionMismatch())
 (-)(S1::ShiftMap, S2::ShiftMap) =

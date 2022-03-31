@@ -125,3 +125,10 @@ function interpolate_coord!(xqi::AbstractArray, xqpi::AbstractArray, xq::Abstrac
     return xqi, xqpi
 end
 
+function setmin!(a::AbstractArray, amin::Real)
+    amin = convert(eltype(a), amin)
+    @simd for i in eachindex(a)
+        @inbounds ai = a[i]
+        @inbounds a[i] = ifelse(ai<amin, amin, ai)
+    end
+end

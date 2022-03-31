@@ -42,7 +42,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
         for (i, vi) in enumerate(inputs(blk))
             # Only need variables that are reachable from sources
             if vi in vars
-                J = jacobian(blk, i, varvals)
+                J = jacobian(blk, i, nT, varvals)
                 r0next = 0
                 for (r, vo) in enumerate(outputs(blk))
                     # Input/output variable could be an array
@@ -156,9 +156,9 @@ function GEJacobian(jacs::TotalJacobian{TF}, exovars;
     nU = length(unknowns)
     ntar = length(jacs.tars)
     zmap = LinearMap(UniformScaling(zero(TF)), nT)
-    H_U = Matrix(hvcat(((nU for _ in 1:ntar)...,),
+    H_U = Matrix(hvcat(ntuple(i->nU, ntar),
         (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in unknowns)...))
-    H_Z = Matrix(hvcat(((nZ for _ in 1:ntar)...,),
+    H_Z = Matrix(hvcat(ntuple(i->nZ, ntar),
         (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in exovars)...))
     keepH_U && (hu = copy(H_U))
     H_U = lu!(H_U)

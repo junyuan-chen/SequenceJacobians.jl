@@ -93,6 +93,11 @@ See also [`getexpectedvalue`](@ref).
 """
 getvalue(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
 
+@inline function getvalues(ha::AbstractHetAgent)
+    vars = valuevars(ha)
+    return ntuple(i->@inbounds(getvalue(ha, vars[i])), length(vars))
+end
+
 """
     getexpectedvalue(ha::AbstractHetAgent, n::Symbol)
 
@@ -104,11 +109,20 @@ See also [`getvalue`](@ref).
 """
 getexpectedvalue(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, Symbol(:E, n))
 
+@inline function expectedvalues(ha::AbstractHetAgent)
+    vars = valuevars(ha)
+    return ntuple(i->@inbounds(getexpectedvalue(ha, vars[i])), length(vars))
+end
+
 """
     policies(ha::AbstractHetAgent)
 
 Return an iterable object that contains all names used for
 identifying each policy of `ha`.
+The returned object must contain names of the policies
+associated with the endogenous states
+and places them in the beginning in the same order as
+how the states are indexed by the object returned by [`endostates`](@ref).
 Each element of the returned object must be accepted by
 [`getpolicy`](@ref) and [`getlastpolicy`](@ref).
 """
@@ -124,6 +138,11 @@ and returns this property.
 See also [`getlastpolicy`](@ref).
 """
 getpolicy(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
+
+@inline function getpolicies(ha::AbstractHetAgent)
+    pols = policies(ha)
+    return ntuple(i->@inbounds(getpolicy(ha, pols[i])), length(pols))
+end
 
 """
     getlastpolicy(ha::AbstractHetAgent, n::Symbol)
@@ -143,7 +162,7 @@ Return the distribution of agents associated with
 the current step of forward iteration from `ha`.
 The fallback method assumes that `D` is a property of `ha`
 and returns this property.
-See also [`getlastdist`](@ref) and [`getdisttemp`](@ref).
+See also [`getlastdist`](@ref) and [`getdistendo`](@ref).
 """
 getdist(ha::AbstractHetAgent) = getproperty(ha, :D)
 
@@ -154,27 +173,27 @@ Return the distribution of agents associated with
 the previous step of forward iteration from `ha`.
 The fallback method assumes that `Dlast` is a property of `ha`
 and returns this property.
-See also [`getdist`](@ref) and [`getdisttemp`](@ref).
+See also [`getdist`](@ref) and [`getdistendo`](@ref).
 """
 getlastdist(ha::AbstractHetAgent) = getproperty(ha, :Dlast)
 
 """
-    getdisttemp(ha::AbstractHetAgent)
+    getdistendo(ha::AbstractHetAgent)
 
-Return an array similar to the one used for distribution of agents
-for storing intermediate results in forward iteration from `ha`.
-The fallback method assumes that `Dtemp` is a property of `ha`
+Return the distribution of agents after the transition
+driven by the endogenous law of motion but before being hitted by exogenous shocks.
+The fallback method assumes that `Dendo` is a property of `ha`
 and returns this property.
 See also [`getdist`](@ref) and [`getlastdist`](@ref).
 """
-getdisttemp(ha::AbstractHetAgent) = getproperty(ha, :Dtemp)
+getdistendo(ha::AbstractHetAgent) = getproperty(ha, :Dendo)
 
 """
-    expect!(ha::AbstractHetAgent)
+    backward_exog!(ha::AbstractHetAgent)
 
 Compute the expected values given the current values and the law of motion of exogenous states.
 """
-function expect!(ha::AbstractHetAgent)
+function backward_exog!(ha::AbstractHetAgent)
     exogs = exogprocs(ha)
     for n in valuevars(ha)
         v = getvalue(ha, n)
@@ -184,13 +203,16 @@ function expect!(ha::AbstractHetAgent)
 end
 
 """
-    update!(ha::AbstractHetAgent, invals...)
+    backward_endo!(ha::AbstractHetAgent, EVs..., invals...)
 
-Update the values and policies of `ha` given the expectation of future `ha`
+Update the values and policies of `ha` given the expected values `EVs`
 and macro variables evaluated at `invals`.
+To allow the computation of Jacobians,
+reference to the arrays of expected values must be done via `EVs`
+instead of any array contained in `ha`.
 This method is essential for computing the sequence-space Jacobians and transitional paths.
 """
-function update! end
+function backward_endo! end
 
 """
     backward!(ha::AbstractHetAgent, invals...)
@@ -204,8 +226,8 @@ function backward!(::TimeDiscrete, ha::AbstractHetAgent, invals...)
     for n in policies(ha)
         copyto!(getlastpolicy(ha, n), getpolicy(ha, n))
     end
-    expect!(ha)
-    update!(ha, invals...)
+    backward_exog!(ha)
+    backward_endo!(ha, expectedvalues(ha)..., invals...)
 end
 
 """
@@ -262,10 +284,10 @@ forward!(ha::AbstractHetAgent, invals...) = forward!(HetAgentStyle(ha), ha, inva
 function forward!(::TimeDiscrete, ha::AbstractHetAgent, invals...)
     D = getdist(ha)
     Dlast = getlastdist(ha)
-    Dtemp = getdisttemp(ha)
+    Dendo = getdistendo(ha)
     copyto!(Dlast, D)
-    forward!(Dtemp, Dlast, endoprocs(ha)...)
-    forward!(D, Dtemp, exogprocs(ha)...)
+    forward!(Dendo, Dlast, endoprocs(ha)...)
+    forward!(D, Dendo, exogprocs(ha)...)
 end
 
 """
@@ -353,6 +375,13 @@ The fallback method takes the dot products disregarding `invals`.
 """
 function aggregate(ha::AbstractHetAgent, invals...)
     pols = policies(ha)
-    return ntuple(i->dot(getpolicy(ha, pols[i]), getdist(ha)), length(pols))
+    D = getdist(ha)
+    N = length(D)
+    s2 = stride1(D)
+    function _agg(i)
+        pol = getpolicy(ha, pols[i])
+        s1 = stride1(pol)
+        return BLAS.dot(N, pol, s1, D, s2)
+    end
+    return ntuple(_agg, length(pols))
 end
-
