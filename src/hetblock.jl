@@ -22,7 +22,6 @@ end
 
 _verbose(verbose::Integer) = (verbose>0, Int(verbose))
 _verbose(verbose::Bool) = (verbose, 20)
-_verbose(verbose) = throw(ArgumentError("invalid specification of keyword verbose"))
 
 function _backwardss!(ha, invals, maxbackiter, backtol, verbose, pgap)
     iter = 0
@@ -248,6 +247,8 @@ function _jacobian!(ca::HetAgentJacCache, i::Int, nT::Int, varvals, ins, val, ev
 
     _setJ!(ca, i, npol)
 end
+
+jacbyinput(::HetBlock) = true
 
 # ! To do: consider shocks to exogenous law of motion and aggregation method
 function jacobian(b::HetBlock, i::Int, nT::Int, varvals::Dict{Symbol,<:ValType})

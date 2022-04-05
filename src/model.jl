@@ -166,10 +166,10 @@ function _collapse!(m::SequenceSpaceModel, calis::Dict, varvals::Dict)
 end
 
 function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
-        targets::ValidVarInput, initials::Union{ValidVarInput,Nothing}=nothing,
-        TF::Type=Float64)
+        targets::Union{ValidVarInput,Nothing}=nothing,
+        initials::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64)
     calibrated isa Pair && (calibrated = (calibrated,))
-    targets isa Pair && (targets = (targets,))
+    targets !== nothing && targets isa Pair && (targets = (targets,))
     initials !== nothing && initials isa Pair && (initials = (initials,))
     calis = Dict{Symbol,ValType{TF}}(calibrated...)
     vars = Symbol[v for v in m.pool if v isa Symbol]
@@ -178,6 +178,11 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
     # This is also the way to tell whether any unknown variable is an Array
     if initials !== nothing
         for (k, v) in initials
+            if v isa Real
+                v = convert(TF, v)
+            else
+                v = convert(AbstractArray{TF}, v)
+            end
             varvals[k] = v
         end
     end
@@ -185,11 +190,18 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
     ins, outs, blks = _collapse!(m, calis, varvals)
 
     tars = Dict{Symbol,ValType{TF}}()
-    for (k, v) in targets
-        if k in outs
-            tars[k] = v
-        else
-            @warn "target value for $k is ignored because $k is an input of a block; consider adding a block for the gap between the target"
+    if targets !== nothing
+        for (k, v) in targets
+            if k in outs
+                if v isa Real
+                    v = convert(TF, v)
+                else
+                    v = convert(AbstractArray{TF}, v)
+                end
+                tars[k] = v
+            else
+                @warn "target value for $k is ignored because $k is an input of a block; consider adding a block for the gap between the target"
+            end
         end
     end
     # Assign a scalar zero whenever the initial value is not provided
@@ -279,4 +291,16 @@ function criterion!(ss::SteadyState, inputs::AbstractVector;
         weight::Union{AbstractMatrix,UniformScaling}=I)
     resids = residuals!(ss, inputs)
     return resids'*weight*resids
+end
+
+function solve!(ST::Type{<:AbstractRootSolver}, ss::SteadyState; kwargs...)
+    f!(y,x) = residuals!(y, ss, x)
+    return solve!(ST, f!, ss.inits; kwargs...)
+end
+
+function solve!(ST::Type{NoRootSolver}, ss::SteadyState; kwargs...)
+    # Update the values without solving for any target
+    for b in ss.blks
+        steadystate!(b, ss.varvals)
+    end
 end

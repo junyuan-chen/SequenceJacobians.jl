@@ -107,3 +107,117 @@ end
     @test j.Js[1][2][1,:] ≈ [0.09578626, -0.68185568, -0.64125217, -0.60439044, -0.57061299] atol=1e-6
     @test j.Js[1][2][5,:] ≈ [0.08926242, 0.12116544, 0.15313027, 0.18541724, 0.21771175] atol=1e-6
 end
+
+@testset "CombinedBlock" begin
+    using SequenceJacobians.TwoAsset
+    pricing = SequenceJacobians.TwoAsset.pricing
+    ins = [:mc, lead(:r), :Y, lead(:Y), :κp, :mup]
+    outs = :inflat
+    bpricing = block(pricing, union([:inflat, lead(:inflat)], ins), :nkpc)
+    mpricing = model(bpricing)
+    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :nkpc=>0, :inflat=>0.1)
+    @test_throws ArgumentError block(mpricing, sspricing, ins, outs, :nkpc)
+    b = block(mpricing, sspricing, ins, outs, :nkpc, ST=Roots_Default_Solver)
+    ins = name.(ins)
+    @test inputs(b) == ins
+    @test invars(b) == ins
+    @test ssinputs(b) == Set(ins)
+    @test outputs(b) == [:inflat]
+    @test !hascache(b)
+    @test nouts(b) == 1
+    @test outlength(b, 1) == 1
+    varvals = copy(sspricing.varvals)
+    nkpc0 = varvals[:nkpc]
+    steadystate!(b, varvals)
+    inflat = b.ss.varvals[:inflat]
+    @test inflat ≈ 0 atol=1e-8
+    @test b.ss.varvals[:nkpc] ≈ 0 atol=1e-8
+    @test varvals[:inflat] == inflat
+    # target value is not written to varvals
+    @test varvals[:nkpc] == nkpc0
+
+    # Compare results with original Python package
+    J = jacobian(b, 3, varvals)
+    @test all(isapprox.(J.Gs[:κp][:inflat], 0, atol=1e-8))
+    Jmc = [0.1 0.09876543 0.09754611;
+           0   0.1        0.09876543;
+           0   0          0.1        ]
+    @test J.Gs[:mc][:inflat] ≈ Jmc atol=1e-8
+    Jmup = [0.0970225 0.09582469 0.09464167;
+            0         0.0970225  0.09582469;
+            0         0          0.0970225  ]
+    @test J.Gs[:mup][:inflat] ≈ Jmup atol=1e-8
+    @test all(isapprox.(J.Gs[:Y][:inflat], 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:r][:inflat], 0, atol=1e-8))
+
+    arbitrage = SequenceJacobians.TwoAsset.arbitrage
+    ins = [lead(:div), lead(:r)]
+    outs = :p
+    barbitrage = block(arbitrage, union([:p, lead(:p)], ins), :equity)
+    b = block(barbitrage, ins, outs, :equity, [:div=>0.14, :r=>0.0125], :equity=>0, :p=>10, ST=Roots_Solver{Brent}, ssargs=(:x0=>(5,15),))
+    varvals = copy(b.ss.varvals)
+    steadystate!(b, varvals)
+    @test b.ss.varvals[:p] == varvals[:p]
+    @test varvals[:p] ≈ 11.2 atol=1e-8
+
+    # Compare results with original Python package
+    J = jacobian(b, 3, varvals)
+    Jdiv = [0 0.98765432 0.97546106;
+            0 0          0.98765432;
+            0 0          0          ]
+    @test J.Gs[:div][:p] ≈ Jdiv atol=1e-8
+    Jr = [0 -11.0617284 -10.92516385;
+          0 0           -11.0617284;
+          0 0           0            ]
+    @test J.Gs[:r][:p] ≈ Jr atol=1e-8
+
+    labor = SequenceJacobians.TwoAsset.labor
+    investment = SequenceJacobians.TwoAsset.investment
+    blabor = block(labor, [:Y, :w, lag(:K), :Z, :α], [:N, :mc])
+    binvest = block(investment, [:Q, lead(:Q), :K, lag(:K), lead(:K), lead(:r), lead(:N), lead(:mc), lead(:Z), :δ, :εI, :α], [:inv, :val])
+    calis = [:Y, :w, :Z, :α, :r, :δ, :εI]
+    b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K], [:inv, :val],
+        calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4], [:inv, :val].=>0.0, [:Q=>2, :K=>11], ST=GSL_Hybrids)
+    varvals = copy(b.ss.varvals)
+    steadystate!(b, varvals)
+    @test varvals[:Q] ≈ 1 atol=1e-8
+    @test varvals[:K] ≈ 10 atol=1e-8
+
+    # Compare results with original Python package
+    J = jacobian(b, 3, varvals)
+    Jyk = [0 0.03789632 0.03714605;
+           0 0.03761037 0.07490055;
+           0 0.03746678 0.0746146  ]
+    @test J.Gs[:Y][:K] ≈ Jyk atol=1e-8
+    Jrq = [0 -0.97663311 -0.95729755;
+           0 0.00736934  -0.97297837;
+           0 0.00370042   0.00736934 ]
+    @test J.Gs[:r][:Q] ≈ Jrq atol=1e-8
+end
+
+@testset "SolvedBlock" begin
+    using SequenceJacobians.TwoAsset
+    pricing = SequenceJacobians.TwoAsset.pricing
+    ins = [:mc, lead(:r), :Y, lead(:Y), :κp, :mup]
+    outs = :inflat
+    bpricing = block(pricing, union([:inflat, lead(:inflat)], ins), :nkpc)
+    mpricing = model(bpricing)
+    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :nkpc=>0, :inflat=>0.1)
+    b = block(mpricing, sspricing, ins, outs, :nkpc, ST=Roots_Default_Solver)
+    varvals = copy(sspricing.varvals)
+    steadystate!(b, varvals)
+    J = jacobian(b, 3, varvals)
+    bj = block(b, J)
+    @test inputs(bj) == inputs(b)
+    @test invars(bj) == invars(b)
+    @test ssinputs(bj) == ssinputs(b)
+    @test outputs(bj) == outputs(b)
+    @test hascache(bj) == hascache(b)
+    @test nouts(bj) == nouts(b)
+    @test outlength(bj, 1) == outlength(b, 1)
+
+    @test_throws ErrorException steadystate!(bj, varvals)
+    @test jacbyinput(bj) == false
+    @test jacobian(bj, 3, varvals) === J
+    @test_throws ErrorException jacobian(bj, 5, varvals)
+end

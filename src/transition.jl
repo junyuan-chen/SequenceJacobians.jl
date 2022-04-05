@@ -4,7 +4,7 @@ const ValidPathInput{TF<:AbstractFloat} = Union{Pair{Symbol,<:AbstractVecOrMat{T
 const PathType{TF<:AbstractFloat} = Union{TF,Pair{Int,Vector{TF}},Pair{Int,Matrix{TF}}}
 
 struct Transition{TF<:AbstractFloat}
-    jacs::TotalJacobian{TF}
+    tjac::TotalJacobian{TF}
     exovars::Vector{Symbol}
     unknowns::Vector{Symbol}
     varpaths::Dict{Symbol,PathType{TF}}
@@ -13,11 +13,11 @@ struct Transition{TF<:AbstractFloat}
     resids::Vector{TF}
 end
 
-function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
+function Transition(tjac::TotalJacobian{TF}, exopaths::ValidPathInput,
         initials::Union{ValidPathInput,Nothing}=nothing;
         H_U::Union{LU,Nothing}=nothing, solveH_U::Bool=true) where TF
-    nT = jacs.nT
-    varvals = jacs.varvals
+    nT = tjac.nT
+    varvals = tjac.varvals
     exopaths isa Pair && (exopaths = (exopaths,))
     initials !== nothing && initials isa Pair && (initials = (initials,))
     varpaths = Dict{Symbol,PathType{TF}}()
@@ -28,12 +28,12 @@ function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
     end
     exovars = Symbol[]
     for (k, v) in exopaths
-        k in jacs.srcs || throw(ArgumentError("$k is not a source variable"))
+        k in tjac.srcs || throw(ArgumentError("$k is not a source variable"))
         push!(exovars, k)
         varpaths[k] = v isa Pair ? v : 0=>v
     end
     upaths = TF[]
-    unknowns = collect(setdiff(jacs.srcs, exovars))
+    unknowns = collect(setdiff(tjac.srcs, exovars))
     for u in unknowns
         upath = get(varpaths, u, nothing)
         if upath === nothing
@@ -55,14 +55,14 @@ function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
         end
     end
     nU = length(unknowns)
-    ntar = length(jacs.tars)
+    ntar = length(tjac.tars)
     if H_U === nothing
         zmap = LinearMap(UniformScaling(zero(TF)), nT)
         H_U = Matrix(hvcat(((nU for _ in 1:ntar)...,),
-            (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in unknowns)...))
+            (get(tjac.totals[v], t, zmap) for t in tjac.tars for v in unknowns)...))
         solveH_U && (H_U = lu!(H_U))
     end
-    for blk in jacs.blks
+    for blk in tjac.blks
         # Any output must have not been met before unless provided by initials
         for ov in outputs(blk)
             outpath = get(varpaths, ov, nothing)
@@ -100,11 +100,11 @@ function Transition(jacs::TotalJacobian{TF}, exopaths::ValidPathInput,
         end
     end
     resids = Vector{TF}(undef, nT*ntar)
-    return Transition(jacs, exovars, unknowns, varpaths, H_U, upaths, resids)
+    return Transition(tjac, exovars, unknowns, varpaths, H_U, upaths, resids)
 end
 
 function _inputs!(tr::Transition, inputs::AbstractVector)
-    nT = tr.jacs.nT
+    nT = tr.tjac.nT
     i0 = 0
     @inbounds for u in tr.unknowns
         path = tr.varpaths[u]
@@ -121,10 +121,10 @@ function _inputs!(tr::Transition, inputs::AbstractVector)
 end
 
 function _resids!(resids::AbstractVector, tr::Transition)
-    nT = tr.jacs.nT
-    varvals = tr.jacs.varvals
+    nT = tr.tjac.nT
+    varvals = tr.tjac.varvals
     i0 = 0
-    @inbounds for tar in tr.jacs.tars
+    @inbounds for tar in tr.tjac.tars
         path = tr.varpaths[tar]
         if path isa Pair
             s, path = (path[1], path[2])
@@ -141,8 +141,8 @@ function _resids!(resids::AbstractVector, tr::Transition)
 end
 
 function residuals!(resids::AbstractVector, tr::Transition)
-    for b in tr.jacs.blks
-        transition!(tr.varpaths, b, tr.jacs.nT)
+    for b in tr.tjac.blks
+        transition!(tr.varpaths, b, tr.tjac.nT)
     end
     _resids!(resids, tr)
     return resids

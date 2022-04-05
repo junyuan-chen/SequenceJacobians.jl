@@ -15,7 +15,7 @@ struct TotalJacobian{TF<:AbstractFloat}
 end
 
 function TotalJacobian(m::SequenceSpaceModel, sources, targets,
-        varvals::Dict{Symbol,ValType{TF}}, nT::Int, excluded=nothing) where TF
+        varvals::Dict{Symbol,ValType{TF}}, nT::Int; excluded=nothing) where TF
     sources isa Symbol && (sources = (sources,))
     targets isa Symbol && (targets = (targets,))
     excluded isa BlockOrVar && (excluded = (excluded,))
@@ -38,11 +38,14 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
         blk = m.pool[v]
         excluded !== nothing && blk in excluded && continue
         pushed = false
+        # For some blocks, Jacobians for all inputs are obtained together
+        byinput = jacbyinput(blk)
+        byinput || (J = jacobian(blk, nT, varvals))
         # Compute direct Jacobians for each input-output pair
         for (i, vi) in enumerate(inputs(blk))
             # Only need variables that are reachable from sources
             if vi in vars
-                J = jacobian(blk, i, nT, varvals)
+                byinput && (J = jacobian(blk, i, nT, varvals))
                 r0next = 0
                 for (r, vo) in enumerate(outputs(blk))
                     # Input/output variable could be an array
@@ -134,7 +137,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
 end
 
 struct GEJacobian{TF<:AbstractFloat}
-    jacs::TotalJacobian{TF}
+    tjac::TotalJacobian{TF}
     exovars::Vector{Symbol}
     unknowns::Vector{Symbol}
     H_U::Union{Matrix{TF}, Nothing}
@@ -142,24 +145,24 @@ struct GEJacobian{TF<:AbstractFloat}
     Gs::Dict{Symbol,Dict{Symbol,JacType{TF}}}
 end
 
-function GEJacobian(jacs::TotalJacobian{TF}, exovars;
+function GEJacobian(tjac::TotalJacobian{TF}, exovars;
         keepH_U::Bool=false, keepfactor::Bool=false) where TF
     exovars isa Symbol && (exovars = (exovars,))
     isempty(exovars) && throw(ArgumentError("exovars cannot be empty"))
     for var in exovars
-        var in jacs.srcs || throw(ArgumentError("$var is not a source variable"))
+        var in tjac.srcs || throw(ArgumentError("$var is not a source variable"))
     end
     exovars = collect(Symbol, exovars)
-    unknowns = collect(setdiff(jacs.srcs, exovars))
-    nT = jacs.nT
+    unknowns = collect(setdiff(tjac.srcs, exovars))
+    nT = tjac.nT
     nZ = length(exovars)
     nU = length(unknowns)
-    ntar = length(jacs.tars)
+    ntar = length(tjac.tars)
     zmap = LinearMap(UniformScaling(zero(TF)), nT)
     H_U = Matrix(hvcat(ntuple(i->nU, ntar),
-        (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in unknowns)...))
+        (get(tjac.totals[v], t, zmap) for t in tjac.tars for v in unknowns)...))
     H_Z = Matrix(hvcat(ntuple(i->nZ, ntar),
-        (get(jacs.totals[v], t, zmap) for t in jacs.tars for v in exovars)...))
+        (get(tjac.totals[v], t, zmap) for t in tjac.tars for v in exovars)...))
     keepH_U && (hu = copy(H_U))
     H_U = lu!(H_U)
     ldiv!(H_U, H_Z)
@@ -169,16 +172,16 @@ function GEJacobian(jacs::TotalJacobian{TF}, exovars;
     j0 = 0
     for z in exovars
         Gs[z] = Dict{Symbol,JacType{TF}}()
-        Nz = length(jacs.varvals[z])
+        Nz = length(tjac.varvals[z])
         i0 = 0
         for u in unknowns
-            Nu = length(jacs.varvals[u])
+            Nu = length(tjac.varvals[u])
             Gs[z][u] = G_U[i0+1:i0+Nu*nT, j0+1:j0+Nz*nT]
             i0 += Nu*nT
         end
         j0 += Nz*nT
     end
-    return GEJacobian(jacs, exovars, unknowns,
+    return GEJacobian(tjac, exovars, unknowns,
         keepH_U ? hu : nothing, keepfactor ? H_U : nothing, Gs)
 end
 
@@ -187,27 +190,26 @@ function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     z === nothing && throw(ArgumentError("$exovar is not an exogenous variable"))
     # G is readily available if endovar is a source
     G = get(z, endovar, nothing)
-    if G === nothing
-        # endovar does not have to be a source
-        endovar in gejac.jacs.vars ||
-            throw(ArgumentError("$endovar is not an endogenous variable"))
-        # M_U combines all indirect effects while M_u is for a specific channel
-        M_U = LinearMap(UniformScaling(zero(TF)), gejac.jacs.nT)
-        M_Z = M_U
-        for (u, ms) in gejac.jacs.totals
-            # Direct effect of exovar
-            if u === exovar
-                M = get(ms, endovar, nothing)
-                M === nothing || (M_Z = M)
-            # Indirect effect via other sources
-            else
-                M_u = get(ms, endovar, nothing)
-                M_u === nothing && continue
-                M_U += M_u * gejac.Gs[exovar][u]
-            end
+    G === nothing || return G
+    # endovar does not have to be a source
+    endovar in gejac.tjac.vars ||
+        throw(ArgumentError("$endovar is not an endogenous variable"))
+    # M_U combines all indirect effects while M_u is for a specific channel
+    M_U = LinearMap(UniformScaling(zero(TF)), gejac.tjac.nT)
+    M_Z = M_U
+    for (u, ms) in gejac.tjac.totals
+        # Direct effect of exovar
+        if u === exovar
+            M = get(ms, endovar, nothing)
+            M === nothing || (M_Z = M)
+        # Indirect effect via other sources
+        else
+            M_u = get(ms, endovar, nothing)
+            M_u === nothing && continue
+            M_U += M_u * gejac.Gs[exovar][u]
         end
-        G = Matrix(M_U + M_Z)
-        gejac.Gs[exovar][endovar] = G
     end
+    G = Matrix(M_U + M_Z)
+    gejac.Gs[exovar][endovar] = G
     return G
 end

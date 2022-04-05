@@ -100,6 +100,8 @@ function steadystate!(b::SimpleBlock, varvals::AbstractDict)
     end
 end
 
+jacbyinput(::SimpleBlock) = true
+
 function jacobian(b::SimpleBlock, i::Int, nT::Int,
         varvals::Dict{Symbol,<:ValType{TF}}) where TF
     ins = inputs(b)

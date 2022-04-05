@@ -2,13 +2,20 @@ using Test
 using SequenceJacobians
 
 using Base: has_offset_axes
+using GSL
 using LinearAlgebra
-using MINPACK: fsolve
-using SequenceJacobians: ValType
+using LoopVectorization
+using Roots: Brent
+using SequenceJacobians: ValType, jacbyinput
+
+if VERSION >= v"1.7" && Sys.isapple()
+    using OpenBLAS32_jll
+end
 
 const tests = [
     "utils",
     "shift",
+    "solvers",
     "lawofmotion",
     "blocks",
     "model",
