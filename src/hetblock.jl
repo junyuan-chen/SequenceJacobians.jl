@@ -1,16 +1,14 @@
-struct HetBlock{HA<:AbstractHetAgent} <: AbstractBlock
-    ins::Vector{Symbol}
-    invars::Vector{VarSpec}
+struct HetBlock{HA<:AbstractHetAgent,ins,outs,NI} <: AbstractBlock{ins,outs}
+    invars::NTuple{NI,VarSpec}
     ssins::Set{Symbol}
-    outs::Vector{Symbol}
     ha::HA
     ssargs::Dict{Symbol,Any}
     jacargs::Dict{Symbol,Any}
-    function HetBlock(ins::Vector{Symbol}, invars::Vector{VarSpec}, ssins::Set{Symbol},
-            outs::Vector{Symbol}, ha::HA, ssargs::Dict{Symbol,Any},
-            jacargs::Dict{Symbol,Any}) where HA
+    function HetBlock(ins::NTuple{NI,Symbol}, invars::NTuple{NI,VarSpec},
+            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, ha::HA, ssargs::Dict{Symbol,Any},
+            jacargs::Dict{Symbol,Any}) where {NI,NO,HA}
         _checkinsouts(ins, outs, ssins)
-        return new{HA}(ins, invars, ssins, outs, ha, ssargs, jacargs)
+        return new{HA,ins,outs,NI}(invars, ssins, ha, ssargs, jacargs)
     end
 end
 
@@ -61,10 +59,9 @@ function _forwardss!(ha, invals, maxforiter, fortol, verbose, pgap)
     return forconverged
 end
 
-function steadystate!(b::HetBlock, varvals::AbstractDict)
+function steadystate!(b::HetBlock, varvals::NamedTuple)
     ha = b.ha
-    ins = inputs(b)
-    invals = ntuple(i->varvals[ins[i]], length(ins))
+    invals = map(k->getfield(varvals, k), inputs(b))
     verbose, pgap = _verbose(get(b.ssargs, :verbose, false))
     # Backward iterations
     backward_init!(ha, invals...)
@@ -79,10 +76,7 @@ function steadystate!(b::HetBlock, varvals::AbstractDict)
     backconverged && forconverged && (b.jacargs[:ssfound] = true)
     # Obtain aggregate outcomes
     vals = aggregate(ha, invals...)
-    for (i, n) in enumerate(outputs(b))
-        val = get(varvals, n, nothing)
-        val isa AbstractArray ? copyto!(val, vals[i]) : (varvals[n] = vals[i])
-    end
+    return merge(varvals, NamedTuple{outputs(b)}(vals))
 end
 
 struct HetAgentJacCache{HA<:AbstractHetAgent, FX<:Tuple, DC, TF<:AbstractFloat, M, N}
@@ -173,20 +167,24 @@ function _setJ!(ca::HetAgentJacCache, i::Int, npol::Int)
     end
 end
 
-function _jacobian!(ca::HetAgentJacCache, i::Int, nT::Int, varvals, ins, val, evs, evsss)
+function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varvals,
+        evs, evsss) where i
+
+    ins = inputs(b)
     ha = ca.ha
     hass = ca.hass
 
     function f1!(fx, x)
         vfxs = splitdimsview(fx)
-        xs = (ntuple(k->varvals[ins[k]], i-1)..., x,
-            ntuple(k->varvals[ins[k+i]], length(ins)-i)...)
+        xs = (map(k->getfield(varvals, k), ins[1:i-1])..., x,
+            map(k->getfield(varvals, k), ins[i+1:length(ins)])...)
         backward_endo!(ha, expectedvalues(ha)..., xs...)
         for k in eachindex(ca.fxs)
             @inbounds copyto!(vfxs[k], ca.fxs[k])
         end
     end
 
+    val = varvals[ins[i]]
     finite_difference_gradient!(ca.df, f1!, val, ca.dcache)
 
     exogs = exogprocs(ha)
@@ -208,8 +206,7 @@ function _jacobian!(ca::HetAgentJacCache, i::Int, nT::Int, varvals, ins, val, ev
     forward_shock!(dDs[1], Dss, endoprocs(ha)..., das...)
 
     npol = length(policies(ha))
-    _dY() = Matrix{TF}(undef, nT, npol)
-    dY = get!(_dY, ca.dYs, i)
+    dY = haskey(ca.dYs, i) ? ca.dYs[i] : (ca.dYs[i] = Matrix{TF}(undef, nT, npol))
     vDss = view(Dss, :)
     vas = ntuple(k->view(Vs[k+nV],:), npol)
     strvDss = stride1(vDss)
@@ -218,13 +215,13 @@ function _jacobian!(ca::HetAgentJacCache, i::Int, nT::Int, varvals, ins, val, ev
         dY[1,o] = BLAS.dot(length(vDss), vDss, strvDss, va, stride1(va))
     end
 
-    xs = ntuple(k->varvals[ins[k]], length(ins))
+    xsss = map(k->getfield(varvals, k), inputs(b))
     function f!(fx, x)
         vfxs = splitdimsview(fx)
         @inbounds for k in 1:nV
             _setEV!(evs[k], evsss[k], ca.dEVs[k], x)
         end
-        backward_endo!(ha, evs..., xs...)
+        backward_endo!(ha, evs..., xsss...)
         @inbounds for k in eachindex(ca.fxs)
             copyto!(vfxs[k], ca.fxs[k])
         end
@@ -251,19 +248,16 @@ end
 jacbyinput(::HetBlock) = true
 
 # ! To do: consider shocks to exogenous law of motion and aggregation method
-function jacobian(b::HetBlock, i::Int, nT::Int, varvals::Dict{Symbol,<:ValType})
+function jacobian(b::HetBlock, ::Val{i}, nT::Int, varvals::NamedTuple) where i
     _makejacca() = HetAgentJacCache(b, nT)
     ca = get!(_makejacca, b.jacargs, :jacca)
     # Still need to allocate a new one if the existing one is not usable
     ca.nT == nT && ca.hass === b.ha || (ca = HetAgentJacCache(b, nT))
 
-    ins = inputs(b)
-    vi = ins[i]
-    val = varvals[vi]
     evs = expectedvalues(ca.ha)
     evsss = expectedvalues(ca.hass)
 
-    _jacobian!(ca, i, nT, varvals, ins, val, evs, evsss)
+    _jacobian!(b, ca, Val(i), nT, varvals, evs, evsss)
 
     return ca
 end

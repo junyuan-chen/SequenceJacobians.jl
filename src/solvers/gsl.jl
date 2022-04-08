@@ -37,9 +37,10 @@ end
 
 function _solve!(ca::GSL_MultirootFSolverCache, xtol, ftol, maxiter, verbose, pgap)
     iter = 0
-    status, xconverged, fconverged = -2, -2, -2
+    CONTINUE = Cint(GSL.GSL_CONTINUE)
+    status, xconverged, fconverged = CONTINUE, CONTINUE, CONTINUE
     converged = false
-    success = GSL.GSL_SUCCESS
+    success = Cint(GSL.GSL_SUCCESS)
     while iter < maxiter
         iter += 1
         verbose && iszero(iter%pgap) && println("  iteration $iter...")

@@ -103,25 +103,30 @@ function show(io::IO, ::MIME"text/plain", m::SequenceSpaceModel)
     end
 end
 
-struct SteadyState{TF<:AbstractFloat}
+struct SteadyState{TF<:AbstractFloat, NT<:NamedTuple, BLK<:Tuple, scins, arins, sctars, artars}
     parent::SequenceSpaceModel
-    blks::Vector{AbstractBlock}
+    blks::BLK
     vars::Vector{Symbol}
-    ins::Vector{Symbol}
-    outs::Vector{Symbol}
-    calis::Dict{Symbol,ValType{TF}}
-    tars::Dict{Symbol,ValType{TF}}
-    varvals::Dict{Symbol,ValType{TF}}
+    varvals::RefValue{NT}
     inits::Vector{TF}
+    arinrange::Vector{UnitRange{Int}}
+    tars::Vector{TF}
+    artarrange::Vector{UnitRange{Int}}
     resids::Vector{TF}
+    outs::Vector{Symbol}
     targeted::BitVector
+    calibrated::Dict{Symbol,Any}
+    targets::Dict{Symbol,Any}
 end
 
-function _collapse!(m::SequenceSpaceModel, calis::Dict, varvals::Dict)
+function _collapse!(m::SequenceSpaceModel, calis::Dict, tars::Dict, varvals::NamedTuple)
     unknowns = Set{Int}()
-    ins = Symbol[]
+    scins = Symbol[]
+    arins = Symbol[]
     outs = Symbol[]
-    blks = AbstractBlock[]
+    sctars = Symbol[]
+    artars = Symbol[]
+    blks = []
     visitedsrc = 0
     Nsrc = length(srcs(m))
     for v in m.order
@@ -135,23 +140,34 @@ function _collapse!(m::SequenceSpaceModel, calis::Dict, varvals::Dict)
                     break
                 end
             end
-            steadystate!(b, varvals)
+            varvals = steadystate!(b, varvals)
         else
             var = m.pool[v]
             cali = get(calis, var, nothing)
             if visitedsrc < Nsrc && v in srcs(m)
                 visitedsrc += 1
                 if v in sssrcs(m) && cali === nothing
-                    msg = "initial value for input variable $var is not assigned"
-                    haskey(varvals, var) || @warn msg
+                    haskey(varvals, var) ||
+                        error("initial value for input variable $var is not assigned")
                     push!(unknowns, v)
-                    push!(ins, var)
+                    val = varvals[var]
+                    push!(val isa Real ? scins : arins, var)
+                    if haskey(tars, var)
+                        @warn "target $var is ignored as it is a source"
+                        delete!(tars, var)
+                    end
                 end
             else
                 gin = inneighbors(m.dag, v)[1]
                 if gin in unknowns
                     push!(unknowns, v)
                     v in dests(m) && push!(outs, var)
+                    if haskey(tars, var)
+                        val = varvals[var]
+                        length(val) == length(tars[var]) || throw(DimensionMismatch(
+                            "length of target $var is $(length(val)); got $(length(tars[var]))"))
+                        push!(val isa Real ? sctars : artars, var) 
+                    end
                     if cali !== nothing
                         @warn "calibrated value for $var is replaced by output from its parent block"
                         delete!(calis, var)
@@ -159,21 +175,22 @@ function _collapse!(m::SequenceSpaceModel, calis::Dict, varvals::Dict)
                 end
             end
             # Only assign calibrated values after the checks
-            cali === nothing || (varvals[var] = cali)
+            cali === nothing || (varvals = merge(varvals, (; var=>cali)))
         end
     end
-    return ins, outs, blks
+    return scins, arins, sctars, artars, outs, blks, varvals
 end
 
 function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
-        targets::Union{ValidVarInput,Nothing}=nothing,
-        initials::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64)
+        initials::Union{ValidVarInput,Nothing}=nothing,
+        targets::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64)
     calibrated isa Pair && (calibrated = (calibrated,))
-    targets !== nothing && targets isa Pair && (targets = (targets,))
     initials !== nothing && initials isa Pair && (initials = (initials,))
-    calis = Dict{Symbol,ValType{TF}}(calibrated...)
+    targets !== nothing && targets isa Pair && (targets = (targets,))
+    calibrated = Dict{Symbol,Any}(calibrated...)
+    targets = Dict{Symbol,Any}(targets...)
     vars = Symbol[v for v in m.pool if v isa Symbol]
-    varvals = Dict{Symbol,ValType{TF}}()
+    varvals = NamedTuple()
     # Assign initials to varvals helps look up assigned values when filling inits
     # This is also the way to tell whether any unknown variable is an Array
     if initials !== nothing
@@ -183,104 +200,150 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
             else
                 v = convert(AbstractArray{TF}, v)
             end
-            varvals[k] = v
+            varvals = merge(varvals, (; k=>v))
         end
     end
 
-    ins, outs, blks = _collapse!(m, calis, varvals)
+    scins, arins, sctars, artars, outs, blks, varvals =
+        _collapse!(m, calibrated, targets, varvals)
 
-    tars = Dict{Symbol,ValType{TF}}()
-    if targets !== nothing
-        for (k, v) in targets
-            if k in outs
-                if v isa Real
-                    v = convert(TF, v)
-                else
-                    v = convert(AbstractArray{TF}, v)
-                end
-                tars[k] = v
-            else
-                @warn "target value for $k is ignored because $k is an input of a block; consider adding a block for the gap between the target"
-            end
-        end
-    end
-    # Assign a scalar zero whenever the initial value is not provided
-    z = zero(TF)
-    inits = Vector{TF}(undef, length(ins))
-    i0 = 0
+    inlength = length(scins)
+    isempty(arins) || (inlength += last(arins).stop)
+
+    inits = Vector{TF}(undef, inlength)
+    arinrange = Vector{UnitRange{Int}}(undef, length(arins))
     if initials !== nothing
-        @inbounds for vi in ins
-            val = get(varvals, vi, z)
+        i0 = 0
+        @inbounds for vi in scins
+            i0 += 1
+            val = varvals[vi]
+            inits[i0] = val
+        end
+        for (iarin, vi) in enumerate(arins)
+            val = varvals[vi]
             w = length(val)
-            if w > 1
-                resize!(inits, length(inits)+w-1)
-                inits[i0+1:i0+w] .= val 
-            else
-                inits[i0+1] = val
-            end
+            r = i0+1:i0+w
+            copyto!(view(inits, r), view(val, :))
+            arinrange[iarin] = r
             i0 += w
         end
     end
+
+    tarlength = length(sctars)
+    isempty(artars) || (tarlength += last(artars).stop)
+    tarlength == inlength || @warn "$inlength inputs for $tarlength targets"
+
+    tars = Vector{TF}(undef, tarlength)
+    artarrange = Vector{UnitRange{Int}}(undef, length(artars))
+    if !isempty(targets)
+        i0 = 0
+        @inbounds for vt in sctars
+            i0 += 1
+            val = targets[vt]
+            tars[i0] = val
+        end
+        for vt in artars
+            val = targets[vt]
+            w = length(val)
+            r = i0+1:i0+w
+            copyto!(view(tars, r), view(val, :))
+            artarrange[iarin] = r
+            i0 += w
+        end
+    end
+
     # Some variables in outs might not be targeted
     resids = Vector{TF}(undef, length(tars))
-    targeted = haskey.(Ref(tars), outs)
-    return SteadyState(m, blks, vars, ins, outs, calis, tars, varvals, inits, resids, targeted)
+    targeted = haskey.(Ref(targets), outs)
+    blks = (blks...,)
+    scins = (scins...,)
+    arins = (arins...,)
+    sctars = (sctars...,)
+    artars = (artars...,)
+    return SteadyState{TF,typeof(varvals),typeof(blks),scins,arins,sctars,artars}(
+        m, blks, vars, Ref(varvals), inits, arinrange, tars, artarrange,
+        resids, outs, targeted, calibrated, targets)
 end
 
-function _inputs!(ss::SteadyState, inputs::AbstractVector)
-    N = length(inputs)
-    i0 = 0
-    @inbounds for vi in ss.ins
-        val = get(ss.varvals, vi, nothing)
-        w = length(val)
-        i0+w > N && error("length of inputs does not match varvals")
-        if val isa Vector
-            for i in 1:w
-                val[i] = inputs[i0+i]
-            end
-        else
-            ss.varvals[vi] = inputs[i0+1]
-        end
-        i0 += w
+varvalstype(::SteadyState{TF,NT}) where {TF,NT} = NT
+blkstype(::SteadyState{TF,NT,BLK}) where {TF,NT,BLK} = BLK
+scalarinputs(::SteadyState{TF,NT,BLK,scins}) where {TF,NT,BLK,scins} = scins
+arrayinputs(::SteadyState{TF,NT,BLK,scins,arins}) where {TF,NT,BLK,scins,arins} = arins
+scalartargets(::SteadyState{TF,NT,BLK,scins,arins,sctars}) where
+    {TF,NT,BLK,scins,arins,sctars} = sctars
+arraytargets(::SteadyState{TF,NT,BLK,scins,arins,sctars,artars}) where
+    {TF,NT,BLK,scins,arins,sctars,artars} = artars
+
+model(ss::SteadyState) = ss.parent
+getvarvals(ss::SteadyState) = ss.varvals[]
+getval(ss::SteadyState, n::Symbol) = getvarvals(ss)[n]
+inputs(ss::SteadyState) = (scalarinputs(ss)..., arrayinputs(ss)...)
+inlength(ss::SteadyState) = length(ss.inits)
+targets(ss::SteadyState) = (scalartargets(ss)..., arraytargets(ss)...)
+tarlength(ss::SteadyState) = length(ss.tars)
+hastarget(ss::SteadyState) = tarlength(ss) > 0
+hastarget(ss::SteadyState, v::Symbol) = haskey(ss.targets, v)
+
+function _inputs!(varvals::NT, ss::SteadyState{TF,NT}, inputs::AbstractVector) where {TF,NT}
+    scins = scalarinputs(ss)
+    arins = arrayinputs(ss)
+    Nsc = length(scins)
+    Nar = length(arins)
+    scalars = NamedTuple{scins}((view(inputs, 1:Nsc)...,))
+    if Nar > 0
+        arrays = NamedTuple{arins}(varvals)
+        rs = ss.arinrange
+        foreach(i->copyto!(view(arrays[i], :), view(inputs, rs[i])), 1:Nar)
+    end
+    return merge(varvals, scalars)
+end
+
+function _tars!(resids::AbstractVector, src::AbstractVector, tars::AbstractVector)
+    @simd for i in eachindex(resids)
+        @inbounds resids[i] = src[i] - tars[i]
     end
 end
 
-function _resids!(resids::AbstractVector, ss::SteadyState)
-    i0 = 0
-    @inbounds for out in ss.outs
-        tar = get(ss.tars, out, nothing)
-        tar === nothing && continue
-        val = ss.varvals[out]
-        w = length(val)
-        ilast = i0 + w
-        ilast > length(resids) && resize!(resids, ilast)
-        if val isa Vector
-            # tar might be a scalar
-            resids[i0+1:i0+w] .= val .- tar
-        else
-            resids[i0+1] = val - tar
-        end
-        i0 += w
+function _resids!(resids::AbstractVector, ss::SteadyState{TF,NT}, varvals::NT) where {TF,NT}
+    sctars = scalartargets(ss)
+    artars = arraytargets(ss)
+    Nsc = length(sctars)
+    Nar = length(artars)
+    scalars = NamedTuple{sctars}(varvals)
+    foreach(i->@inbounds(resids[i]=scalars[i]-ss.tars[i]), 1:Nsc)
+    if Nar > 0
+        arrays = NamedTuple{artars}(varvals)
+        rs = ss.artarrange
+        foreach(i->_tars!(view(resids,rs[i]), view(arrays[i],:), view(ss.tars,rs[i])), 1:Nar)
     end
-end
-
-function residuals!(resids::AbstractVector, ss::SteadyState)
-    for b in ss.blks
-        steadystate!(b, ss.varvals)
-    end
-    _resids!(resids, ss)
     return resids
 end
 
-residuals!(ss::SteadyState) = residuals!(ss.resids, ss)
-
-function residuals!(resids::AbstractVector, ss::SteadyState, inputs::AbstractVector)
-    _inputs!(ss, inputs)
-    return residuals!(resids, ss)
+function residuals!(resids::AbstractVector, ss::SteadyState{TF,NT,BLK}, inputs::AbstractVector) where {TF,NT,BLK}
+    if @generated
+        ex = :(_inputs!(getvarvals(ss), ss, inputs))
+        for i in 1:length(BLK.parameters)
+            ex = :(steadystate!(blks[$i], $ex))
+        end
+        ex = quote
+            blks = ss.blks
+            varvals = $ex
+            ss.varvals[] = varvals
+            _resids!(resids, ss, varvals)
+        end
+        return ex
+    else
+        varvals = _inputs!(getvarvals(ss), ss, inputs)
+        for b in ss.blks
+            varvals = steadystate!(b, varvals)
+        end
+        ss.varvals[] = varvals
+        return _resids!(resids, ss, varvals)
+    end
 end
 
-residuals!(ss::SteadyState, inputs::AbstractVector) =
-    residuals!(ss.resids, ss, inputs)
+residuals!(ss::SteadyState) = residuals!(ss.resids, ss, ss.inits)
+residuals!(ss::SteadyState, inputs::AbstractVector) = residuals!(ss.resids, ss, inputs)
 
 function criterion!(ss::SteadyState; weight::Union{AbstractMatrix,UniformScaling}=I)
     resids = residuals!(ss)
@@ -293,14 +356,29 @@ function criterion!(ss::SteadyState, inputs::AbstractVector;
     return resids'*weight*resids
 end
 
-function solve!(ST::Type{<:AbstractRootSolver}, ss::SteadyState; kwargs...)
+function solve!(ST::Type{<:AbstractVectorRootSolver}, ss::SteadyState;
+        keepinits::Bool=false, kwargs...)
     f!(y,x) = residuals!(y, ss, x)
-    return solve!(ST, f!, ss.inits; kwargs...)
+    r = solve!(ST, f!, ss.inits; kwargs...)
+    keepinits || copyto!(ss.inits, r[1])
+    return getvarvals(ss)
 end
 
-function solve!(ST::Type{NoRootSolver}, ss::SteadyState; kwargs...)
+function solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
+        kwargs...) where {TF,NT,BLK}
     # Update the values without solving for any target
-    for b in ss.blks
-        steadystate!(b, ss.varvals)
+    if @generated
+        ex = :(getvarvals(ss))
+        for i in 1:length(BLK.parameters)
+            ex = :(steadystate!(blks[$i], $ex))
+        end
+        return :(blks = ss.blks; varvals = $ex; ss.varvals[] = varvals; varvals)
+    else
+        varvals = getvarvals(ss)
+        for b in ss.blks
+            varvals = steadystate!(b, varvals)
+        end
+        ss.varvals[] = varvals
+        return varvals
     end
 end

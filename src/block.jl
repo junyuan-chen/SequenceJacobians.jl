@@ -19,30 +19,24 @@ name(v::Symbol) = v
 
 convert(::Type{Symbol}, v::VarSpec) = v.name
 
-abstract type AbstractBlock end
+abstract type AbstractBlock{ins,outs} end
 
-inputs(b::AbstractBlock) = getfield(b, :ins)
+inputs(::AbstractBlock{ins}) where ins = ins
 invars(b::AbstractBlock) = getfield(b, :invars)
 ssinputs(b::AbstractBlock) = getfield(b, :ssins)
-outputs(b::AbstractBlock) = getfield(b, :outs)
+outputs(::AbstractBlock{ins,outs}) where {ins,outs} = outs
 
-function _countcache(cache::ValidCache, outs::Vector{Symbol})
-    count = 0
-    for n in outs
-        o = get(cache, n, nothing)
-        l = o === nothing ? 1 : length(o)
-        count += l
-    end
-    return count
-end
+_countcache(cache::ValidCache, outs) =
+    sum(k->haskey(cache, k) ? length(cache[k])::Int : 1, outs)
 
-hascache(b::AbstractBlock) = hasfield(typeof(b), :cache) && b.cache isa Dict
-nouts(b::AbstractBlock) = hascache(b) ? _countcache(b.cache, outputs(b)) : length(outputs(b))
+hascache(b::AbstractBlock) = hasfield(typeof(b), :cache)
+outlength(b::AbstractBlock) =
+    hascache(b) ? _countcache(b.cache, outputs(b)) : length(outputs(b))
 
 function outlength(b::AbstractBlock, r::Int)
     hascache(b) || return 1
-    out = get(b.cache, outputs(b)[r], nothing)
-    return out === nothing ? 1 : length(out)
+    vo = outputs(b)[r]
+    return haskey(b.cache, vo) ? length(b.cache[vo])::Int : 1
 end
 
 function _checkinsouts(ins, outs, ssins)
@@ -53,28 +47,27 @@ function _checkinsouts(ins, outs, ssins)
         throw(ArgumentError("an input cannot be the output of the same block"))
 end
 
-struct SimpleBlock{CA<:ValidCache,F<:Function} <: AbstractBlock
-    ins::Vector{Symbol}
-    invars::Vector{VarSpec}
+struct SimpleBlock{CA<:ValidCache,F<:Function,ins,outs,NI} <: AbstractBlock{ins,outs}
+    invars::NTuple{NI,VarSpec}
     ssins::Set{Symbol}
-    outs::Vector{Symbol}
     cache::CA
     f::F
-    function SimpleBlock(ins::Vector{Symbol}, invars::Vector{VarSpec}, ssins::Set{Symbol},
-            outs::Vector{Symbol}, cache::CA, f::F) where {CA,F}
+    function SimpleBlock(ins::NTuple{NI,Symbol}, invars::NTuple{NI,VarSpec},
+            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, cache::CA, f::F) where {NI,NO,CA,F}
         _checkinsouts(ins, outs, ssins)
-        return new{CA,F}(ins, invars, ssins, outs, cache, f)
+        return new{CA,F,ins,outs,NI}(invars, ssins, cache, f)
     end
 end
 
 function _inout(ins, outs, ssins)
-    ins isa Union{Symbol,VarSpec} && (ins = (ins,))
-    outs isa Symbol && (outs = (outs,))
+    ins = ins isa Union{Symbol,VarSpec} ? (ins,) : (ins...,)
+    outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
-    invars = var.(ins)
-    ins = name.(invars)
-    ssins = Set{Symbol}(name.(ssins))
-    outs = collect(Symbol, outs)
+    # Must do invars before ins
+    invars = map(var, ins)
+    ins = map(name, ins)
+    ssins = Set{Symbol}(map(name, ssins))
+    outs = map(name, outs)
     return ins, invars, ssins, outs
 end
 
@@ -82,43 +75,36 @@ block(f::Function, ins, outs; ssins=ins, cache=nothing) =
     SimpleBlock(_inout(ins, outs, ssins)..., cache, f)
 
 hascache(b::SimpleBlock{Nothing}) = false
-nouts(b::SimpleBlock{Nothing}) = length(b.outs)
+outlength(b::SimpleBlock{Nothing}) = length(outputs(b))
 outlength(b::SimpleBlock{Nothing}, r::Int) = 1
 
 function (b::SimpleBlock)(x...)
     out = hascache(b) ? b.f(b.cache, x...) : b.f(x...)
-    # This prevents iterating over the elements of a Vector output
-    return out isa Tuple ? out : (out,)
+    out = out isa Tuple ? out : (out,)
+    return NamedTuple{outputs(b)}(out)
 end
 
-function steadystate!(b::SimpleBlock, varvals::AbstractDict)
-    ins = inputs(b)
-    vals = b(ntuple(i->varvals[ins[i]], length(ins))...)
-    for (i, n) in enumerate(outputs(b))
-        val = get(varvals, n, nothing)
-        val isa AbstractArray ? copyto!(val, vals[i]) : (varvals[n] = vals[i])
-    end
+function steadystate!(b::SimpleBlock, varvals::NamedTuple)
+    vals = b(map(k->getfield(varvals, k), inputs(b))...)
+    return merge(varvals, vals)
 end
 
 jacbyinput(::SimpleBlock) = true
 
-function jacobian(b::SimpleBlock, i::Int, nT::Int,
-        varvals::Dict{Symbol,<:ValType{TF}}) where TF
+function jacobian(b::SimpleBlock, ::Val{i}, nT::Int, varvals::NamedTuple,
+        TF::Type=Float64) where i
     ins = inputs(b)
     vi = ins[i]
     val = varvals[vi]
-    function f(x)
-        xs = (ntuple(k->varvals[ins[k]], i-1)..., x,
-            ntuple(k->varvals[ins[k+i]], length(ins)-i)...)
-        return collect(Iterators.flatten(b.f(xs...)))
-    end
-    J = Matrix{TF}(undef, nouts(b), length(val))
-    if val isa AbstractArray
-        ForwardDiff.jacobian!(J, f, vec(val))
+    f(x) = collect(Iterators.flatten(b.f(map(k->getfield(varvals, k), ins[1:i-1])..., x,
+        map(k->getfield(varvals, k), ins[i+1:length(ins)])...)))
+    no = outlength(b)
+    J = Matrix{TF}(undef, no, length(val))
+    if val isa Real
+        return ForwardDiff.derivative!(J, f, val)
     else
-        ForwardDiff.derivative!(J, f, val)
+        return ForwardDiff.jacobian!(J, f, vec(val))
     end
-    return J
 end
 
 function getjacmap(b::SimpleBlock{Nothing}, J::Matrix,

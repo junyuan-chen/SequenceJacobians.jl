@@ -5,20 +5,21 @@ struct Roots_Solver{T<:Union{Roots.AbstractUnivariateZeroMethod,Nothing}} <: Abs
 const Roots_Default_Solver = Roots_Solver{Nothing}
 
 function solve!(t::Type{Roots_Solver{T}}, f, x0; kwargs...) where T
-    z = Roots.find_zero(f, x0, T(); kwargs...)
+    z = Roots.solve(Roots.ZeroProblem(f, x0), T(); kwargs...)
     return z, true
 end
 
 function solve!(t::Type{Roots_Default_Solver}, f, x0; kwargs...)
-    z = Roots.find_zero(f, x0; kwargs...)
-    return z, true
+    z = Roots.solve(Roots.ZeroProblem(f, x0); kwargs...)
+    return z, !isnan(z)
 end
 
-function solve!(ST::Type{Roots_Solver{T}}, ss::SteadyState; x0=nothing, kwargs...) where T
-    length(ss.resids)==1 && length(ss.ins)==1 || throw(ArgumentError(
+function solve!(ST::Type{Roots_Solver{T}}, ss::SteadyState{TF};
+        x0=nothing, kwargs...) where {T,TF}
+    inlength(ss) == tarlength(ss) == 1 || throw(ArgumentError(
         "$ST is not accepted for multi-dimensional problems"))
     function f(x)
-        ss.varvals[ss.ins[1]] = x
+        ss.inits[1] = x
         return residuals!(ss)[1]
     end
     if T <: Roots.AbstractBracketing
@@ -27,5 +28,6 @@ function solve!(ST::Type{Roots_Solver{T}}, ss::SteadyState; x0=nothing, kwargs..
     else
         x0 === nothing && (x0 = ss.inits[1])
     end
-    return solve!(ST, f, x0; kwargs...)
+    solve!(ST, f, x0; kwargs...)::Tuple{TF,Bool}
+    return getvarvals(ss)
 end

@@ -1,10 +1,10 @@
 const JacType{TF<:AbstractFloat} = Union{Matrix{TF},LinearMap{TF}}
 
-struct TotalJacobian{TF<:AbstractFloat}
+struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     parent::SequenceSpaceModel
     blks::Vector{AbstractBlock}
     vars::Set{Symbol}
-    varvals::Dict{Symbol,ValType{TF}}
+    varvals::NT
     nT::Int
     srcs::Set{Symbol}
     tars::Vector{Symbol}
@@ -15,7 +15,7 @@ struct TotalJacobian{TF<:AbstractFloat}
 end
 
 function TotalJacobian(m::SequenceSpaceModel, sources, targets,
-        varvals::Dict{Symbol,ValType{TF}}, nT::Int; excluded=nothing) where TF
+        varvals::NamedTuple, nT::Int; excluded=nothing, TF::Type=Float64)
     sources isa Symbol && (sources = (sources,))
     targets isa Symbol && (targets = (targets,))
     excluded isa BlockOrVar && (excluded = (excluded,))
@@ -45,7 +45,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
         for (i, vi) in enumerate(inputs(blk))
             # Only need variables that are reachable from sources
             if vi in vars
-                byinput && (J = jacobian(blk, i, nT, varvals))
+                byinput && (J = jacobian(blk, Val(i), nT, varvals))
                 r0next = 0
                 for (r, vo) in enumerate(outputs(blk))
                     # Input/output variable could be an array

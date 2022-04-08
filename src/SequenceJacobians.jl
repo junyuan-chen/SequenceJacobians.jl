@@ -1,5 +1,6 @@
 module SequenceJacobians
 
+using Base: RefValue
 using FiniteDiff: finite_difference_gradient!, GradientCache
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
@@ -11,10 +12,13 @@ using Statistics: mean
 using Tullio: @tullio
 
 import Base: ==, eltype, zero, show, convert
+import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
 
-# Reexport objects from Graphs
+# Reexport from CommonSolve
+export solve!
+# Reexport from Graphs
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
 
@@ -33,7 +37,6 @@ export supconverged,
        AbstractVectorRootSolver,
        AbstractScalarRootSolver,
        AbstractSolverCache,
-       solve!,
 
        VarSpec,
        var,
@@ -47,7 +50,6 @@ export supconverged,
        ssinputs,
        outputs,
        hascache,
-       nouts,
        outlength,
        SimpleBlock,
        block,
@@ -63,6 +65,12 @@ export supconverged,
        dests,
        isblock,
        SteadyState,
+       getvarvals,
+       getval,
+       inlength,
+       targets,
+       tarlength,
+       hastarget,
        residuals!,
        criterion!,
 

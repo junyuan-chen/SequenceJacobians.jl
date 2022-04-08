@@ -1,75 +1,72 @@
-struct CombinedBlock{HasJacTars, ST<:AbstractRootSolver, TF<:AbstractFloat} <: AbstractBlock
-    ins::Vector{Symbol}
+struct CombinedBlock{HasJacTars, ST<:AbstractRootSolver, SS<:SteadyState, ins, outs} <: AbstractBlock{ins,outs}
     ssins::Set{Symbol}
-    outs::Vector{Symbol}
-    model::SequenceSpaceModel
-    ss::SteadyState{TF}
+    ss::SS
     ssargs::Dict{Symbol,Any}
     jactars::Vector{Symbol}
     jacargs::Dict{Symbol,Any}
-    function CombinedBlock{HasJacTars,ST,TF}(ins::Vector{Symbol}, ssins::Set{Symbol},
-            outs::Vector{Symbol}, model::SequenceSpaceModel, ss::SteadyState{TF},
-            ssargs::Dict{Symbol,Any}, jactars::Vector{Symbol},
-            jacargs::Dict{Symbol,Any}) where {HasJacTars,ST,TF}
-        ss.parent === model || throw(ArgumentError(
-            "the SteadyState is not associated with the specifided model"))
+    function CombinedBlock(ins::NTuple{NI,Symbol}, ssins::Set{Symbol},
+            outs::NTuple{NO,Symbol}, ss::SS, ssargs::Dict{Symbol,Any},
+            jactars::Vector{Symbol}, jacargs::Dict{Symbol,Any}, HasJacTars::Bool,
+            ::Type{ST}) where {NI,NO,SS<:SteadyState,ST<:AbstractRootSolver}
+        m = model(ss)
+        # No duplicate is allowed for extracting varvals with ins
+        ins = (unique(ins)...,)
         if ST === NoRootSolver
-            isempty(ss.tars) || throw(ArgumentError(
+            hastarget(ss) && throw(ArgumentError(
                 "NoRootSolver is not allowed with nonempty steady state targets"))
             HasJacTars && throw(ArgumentError(
                 "NoRootSolver is not allowed with nonempty Jacobian targets"))
         else
-            isempty(ss.tars) && throw(ArgumentError(
+            hastarget(ss) || throw(ArgumentError(
                 "solver type must be NoRootSolver with empty steady state target"))
         end
         length(ins) > 0 || throw(ArgumentError("the inputs of a block cannot be empty"))
         length(outs) > 0 || throw(ArgumentError("the outputs of a block cannot be empty"))
         for vi in ins
-            v = get(model.invpool, vi, 0)
+            v = get(m.invpool, vi, 0)
             v === 0 && throw(ArgumentError("$vi is not a variable of the model"))
-            if isempty(ss.tars)
-                v in srcs(model) || throw(ArgumentError("$vi is not a source of the model"))
-            else
-                haskey(ss.calis, vi) || throw(ArgumentError(
+            if hastarget(ss)
+                haskey(ss.calibrated, vi) || throw(ArgumentError(
                     "$vi must be a calibrated variable for the steady state"))
+            else
+                v in srcs(m) || throw(ArgumentError("$vi is not a source of the model"))
             end
         end
         for vo in outs
-            v = get(model.invpool, vo, 0)
+            v = get(m.invpool, vo, 0)
             v === 0 && throw(ArgumentError("$vo is not a variable of the model"))
-            # nouts rely on varvals
-            haskey(ss.varvals, vo) || error("varvals is not populated")
+            # outlength rely on varvals
+            haskey(getvarvals(ss), vo) || error("$vo is not in varvals")
         end
         for v in jactars
-            haskey(ss.tars, v) || throw(ArgumentError("$v is not a target for steady state"))
+            hastarget(ss, v) || throw(ArgumentError("$v is not a target for steady state"))
         end
-        return new{HasJacTars,ST,TF}(ins, ssins, outs, model, ss, ssargs, jactars, jacargs)
+        return new{HasJacTars,ST,SS,ins,outs}(ssins, ss, ssargs, jactars, jacargs)
     end
 end
 
-function block(m::SequenceSpaceModel, ss::SteadyState{TF}, ins, outs, jactars;
-        ST::Type{<:AbstractRootSolver}=NoRootSolver, ssins=ins, ssargs=nothing,
-        jacargs=nothing) where TF
-    ins isa Union{Symbol,VarSpec} && (ins = (ins,))
-    outs isa Symbol && (outs = (outs,))
+function block(ss::SteadyState, ins, outs, jactars;
+        Solver::Type{<:AbstractRootSolver}=NoRootSolver, ssins=ins, ssargs=nothing,
+        jacargs=nothing)
+    ins = ins isa Union{Symbol,VarSpec} ? (ins,) : (ins...,)
+    outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
-    ins = name.(ins)
-    ssins = Set{Symbol}(name.(ssins))
-    outs = collect(Symbol, outs)
+    ins = map(name, ins)
+    ssins = Set{Symbol}(map(name, ssins))
+    outs = map(name, outs)
     jactars isa Symbol && (jactars = (jactars,))
     jactars = collect(Symbol, jactars)
     HasJacTars = !isempty(jactars)
     ssargs = ssargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(ssargs...)
     jacargs = jacargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(jacargs...)
-    return CombinedBlock{HasJacTars,ST,TF}(ins, ssins, outs, m, ss, ssargs, jactars, jacargs)
+    return CombinedBlock(ins, ssins, outs, ss, ssargs, jactars, jacargs, HasJacTars, Solver)
 end
 
 function block(bs::Union{AbstractBlock,Vector{<:AbstractBlock}}, ins, outs, jactars,
-        calibrated::ValidVarInput, targets::Union{ValidVarInput,Nothing}=nothing,
-        initials::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64; kwargs...)
-    m = model(bs)
-    ss = SteadyState(m, calibrated, targets, initials, TF)
-    return block(m, ss, ins, outs, jactars; kwargs...)
+        calibrated::ValidVarInput, initials::Union{ValidVarInput,Nothing}=nothing,
+        targets::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64; kwargs...)
+    ss = SteadyState(model(bs), calibrated, initials, targets, TF)
+    return block(ss, ins, outs, jactars; kwargs...)
 end
 
 invars(b::CombinedBlock) = inputs(b)
@@ -77,29 +74,25 @@ invars(b::CombinedBlock) = inputs(b)
 hasjactars(::CombinedBlock{HasJacTars}) where HasJacTars = HasJacTars
 solvertype(::CombinedBlock{HasJacTars,ST}) where {HasJacTars,ST} = ST
 
-nouts(b::CombinedBlock) = sum(vo->length(b.ss.varvals[vo]), outputs(b))
-outlength(b::CombinedBlock, r::Int) = length(b.ss.varvals[outputs(b)[r]])
+outlength(b::CombinedBlock) = sum(vo->length(getvarvals(b.ss)[vo]), outputs(b))
+outlength(b::CombinedBlock, r::Int) = length(getvarvals(b.ss)[outputs(b)[r]])
 
-function steadystate!(b::CombinedBlock, varvals::AbstractDict)
-    bvarvals = b.ss.varvals
-    for vi in ssinputs(b)
-        bvarvals[vi] = varvals[vi]
-    end
-    solve!(solvertype(b), b.ss; b.ssargs...)
-    for vo in outputs(b)
-        val = get(varvals, vo, nothing)
-        val isa AbstractArray ? copyto!(val, bvarvals[vo]) : (varvals[vo] = bvarvals[vo])
-    end
+function steadystate!(b::CombinedBlock, varvals::NamedTuple)
+    b.ss.varvals[] = merge(getvarvals(b.ss), NamedTuple{inputs(b)}(varvals))
+    bvarvals = solve!(solvertype(b), b.ss; b.ssargs...)
+    return merge(varvals, NamedTuple{outputs(b)}(bvarvals))
 end
 
 jacbyinput(::CombinedBlock) = false
 
-function jacobian(b::CombinedBlock{true}, nT::Int, varvals::Dict{Symbol})
+function jacobian(b::CombinedBlock{true}, nT::Int, varvals::NamedTuple)
     ins = inputs(b)
     outs = outputs(b)
-    sources = union(ins, outs)
+    sources = (ins..., outs...)
     excluded = get(b.jacargs, :excluded, nothing)
-    tjac = TotalJacobian(b.model, sources, b.jactars, b.ss.varvals, nT; excluded=excluded)
+    # varvals from the argument may not contain internal variabls of b
+    tjac = TotalJacobian(model(b.ss), sources, b.jactars, getvarvals(b.ss), nT;
+        excluded=excluded)
     keepH_U = get(b.jacargs, :keepH_U, false)
     keepfactor = get(b.jacargs, :keepfactor, false)
     gejac = GEJacobian(tjac, ins; keepH_U=keepH_U, keepfactor=keepfactor)
@@ -111,12 +104,13 @@ function jacobian(b::CombinedBlock{true}, nT::Int, varvals::Dict{Symbol})
     return gejac
 end
 
-function jacobian(b::CombinedBlock{false}, nT::Int, varvals::Dict{Symbol})
+function jacobian(b::CombinedBlock{false}, nT::Int, varvals::NamedTuple)
     ins = inputs(b)
     outs = outputs(b)
-    sources = union(ins, outs)
+    sources = (ins..., outs...)
     excluded = get(b.jacargs, :excluded, nothing)
-    return TotalJacobian(b.model, sources, b.jactars, b.ss.varvals, nT; excluded=excluded)
+    return TotalJacobian(model(b.ss), sources, b.jactars, getvarvals(b.ss), nT;
+        excluded=excluded)
 end
 
 function getjacmap(b::CombinedBlock{true}, J::GEJacobian,
