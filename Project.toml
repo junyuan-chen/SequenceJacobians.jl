@@ -24,9 +24,10 @@ GSL = "1"
 Graphs = "1.4"
 LinearMaps = "3"
 LoopVectorization = "0.12.101"
+NLsolve = "4.5"
 OpenBLAS32_jll = "0.3"
 Requires = "1"
-Roots = "1.4"
+Roots = "1.4, 2"
 SplitApplyCombine = "1.2"
 Tullio = "0.3.3"
 julia = "1.6"
@@ -34,9 +35,10 @@ julia = "1.6"
 [extras]
 GSL = "92c85e6c-cbff-5e0c-80f7-495c94daaecd"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
 OpenBLAS32_jll = "656ef2d0-ae68-5445-9ca0-591084a874a2"
 Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["GSL", "LoopVectorization", "OpenBLAS32_jll", "Roots", "Test"]
+test = ["GSL", "LoopVectorization", "NLsolve", "OpenBLAS32_jll", "Roots", "Test"]

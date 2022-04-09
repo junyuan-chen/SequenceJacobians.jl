@@ -84,14 +84,11 @@ function mkt_clearing(K, A, Y, C, δ)
     return asset_mkt, goods_mkt
 end
 
-kssstarget(r, Y) = r, Y
-
 function ksblocks(; hhkwargs...)
     bhh = kshhblock(0, 200, 500, 0.966, 0.5, 7; hhkwargs...)
     bfirm = block(firm, [lag(:K), :L, :Z, :α, :δ], [:r, :w, :Y])
     bmkt = block(mkt_clearing, [:K, :A, :Y, :C, :δ], [:asset_mkt, :goods_mkt])
-    bss = block(kssstarget, [:r, :Y], [:rss, :Yss])
-    return bhh, bfirm, bmkt, bss
+    return bhh, bfirm, bmkt
 end
 
 end

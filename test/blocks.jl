@@ -112,45 +112,45 @@ end
     using SequenceJacobians.TwoAsset
     pricing = SequenceJacobians.TwoAsset.pricing
     ins = (:mc, lead(:r), :Y, lead(:Y), :κp, :mup)
-    outs = :inflat
-    bpricing = block(pricing, union([:inflat, lead(:inflat)], ins), :nkpc)
+    outs = :pip
+    bpricing = block(pricing, (:pip, lead(:pip), ins...), :nkpc)
     mpricing = model(bpricing)
-    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :inflat=>0.1, :nkpc=>0)
+    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :pip=>0.1, :nkpc=>0)
     @test_throws ArgumentError block(sspricing, ins, outs, :nkpc)
-    b = block(sspricing, ins, outs, :nkpc, Solver=Roots_Default_Solver)
+    b = block(sspricing, ins, outs, :nkpc, solver=Roots_Default)
     ins = (:mc, :r, :Y, :κp, :mup)
     @test inputs(b) == ins
     @test invars(b) == ins
     @test ssinputs(b) == Set(ins)
-    @test outputs(b) == (:inflat,)
+    @test outputs(b) == (:pip,)
     @test !hascache(b)
     @test outlength(b) == 1
     @test outlength(b, 1) == 1
     varvals = getvarvals(sspricing)
     steadystate!(b, varvals)
-    @test getval(b.ss, :inflat) ≈ 0 atol=1e-8
+    @test getval(b.ss, :pip) ≈ 0 atol=1e-8
     @test getval(b.ss, :nkpc) ≈ 0 atol=1e-8
 
     # Compare results with original Python package
     J = jacobian(b, 3, varvals)
-    @test all(isapprox.(J.Gs[:κp][:inflat], 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:κp][:pip], 0, atol=1e-8))
     Jmc = [0.1 0.09876543 0.09754611;
            0   0.1        0.09876543;
            0   0          0.1        ]
-    @test J.Gs[:mc][:inflat] ≈ Jmc atol=1e-8
+    @test J.Gs[:mc][:pip] ≈ Jmc atol=1e-8
     Jmup = [0.0970225 0.09582469 0.09464167;
             0         0.0970225  0.09582469;
             0         0          0.0970225  ]
-    @test J.Gs[:mup][:inflat] ≈ Jmup atol=1e-8
-    @test all(isapprox.(J.Gs[:Y][:inflat], 0, atol=1e-8))
-    @test all(isapprox.(J.Gs[:r][:inflat], 0, atol=1e-8))
+    @test J.Gs[:mup][:pip] ≈ Jmup atol=1e-8
+    @test all(isapprox.(J.Gs[:Y][:pip], 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:r][:pip], 0, atol=1e-8))
 
     arbitrage = SequenceJacobians.TwoAsset.arbitrage
     ins = (lead(:div), lead(:r))
     outs = :p
-    barbitrage = block(arbitrage, union([:p, lead(:p)], ins), :equity)
+    barbitrage = block(arbitrage, (:p, lead(:p), ins...), :equity)
     b = block(barbitrage, ins, outs, :equity, [:div=>0.14, :r=>0.0125], :p=>10, :equity=>0,
-        Solver=Roots_Solver{Brent}, ssargs=(:x0=>(5,15),))
+        solver=Brent(), ssargs=(:x0=>(5,15),))
     varvals = steadystate!(b, getvarvals(b.ss))
     @test getval(b.ss, :p) ≈ 11.2 atol=1e-8
 
@@ -172,7 +172,7 @@ end
     calis = [:Y, :w, :Z, :α, :r, :δ, :εI]
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K], [:inv, :val],
         calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4],
-        [:Q=>2, :K=>11], [:inv, :val].=>0.0, Solver=GSL_Hybrids)
+        [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
     varvals = steadystate!(b, getvarvals(b.ss))
     @test varvals[:Q] ≈ 1 atol=1e-8
     @test varvals[:K] ≈ 10 atol=1e-8
@@ -193,11 +193,11 @@ end
     using SequenceJacobians.TwoAsset
     pricing = SequenceJacobians.TwoAsset.pricing
     ins = [:mc, lead(:r), :Y, lead(:Y), :κp, :mup]
-    outs = :inflat
-    bpricing = block(pricing, union([:inflat, lead(:inflat)], ins), :nkpc)
+    outs = :pip
+    bpricing = block(pricing, union([:pip, lead(:pip)], ins), :nkpc)
     mpricing = model(bpricing)
-    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :inflat=>0.1, :nkpc=>0)
-    b = block(sspricing, ins, outs, :nkpc, Solver=Roots_Default_Solver)
+    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :pip=>0.1, :nkpc=>0)
+    b = block(sspricing, ins, outs, :nkpc, solver=Roots_Default)
     varvals = steadystate!(b, getvarvals(b.ss))
     J = jacobian(b, 3, varvals)
     bj = block(b, J)

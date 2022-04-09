@@ -32,11 +32,12 @@ export supconverged,
        Lead,
        ShiftMap,
 
-       AbstractRootSolver,
        NoRootSolver,
-       AbstractVectorRootSolver,
-       AbstractScalarRootSolver,
-       AbstractSolverCache,
+       isvectorrootsolver,
+       isscalarrootsolver,
+       isrootsolver,
+       isrootsolvercache,
+       rootsolvercache,
 
        VarSpec,
        var,
@@ -56,23 +57,6 @@ export supconverged,
        steadystate!,
        jacobian,
        transition!,
-
-       BlockOrVar,
-       SequenceSpaceModel,
-       model,
-       srcs,
-       sssrcs,
-       dests,
-       isblock,
-       SteadyState,
-       getvarvals,
-       getval,
-       inlength,
-       targets,
-       tarlength,
-       hastarget,
-       residuals!,
-       criterion!,
 
        AbstractHetAgent,
        HetAgentStyle,
@@ -113,6 +97,23 @@ export supconverged,
        rouwenhorstexp,
        EndoProc,
        assetproc,
+
+       BlockOrVar,
+       SequenceSpaceModel,
+       model,
+       srcs,
+       sssrcs,
+       dests,
+       isblock,
+       SteadyState,
+       getvarvals,
+       getval,
+       inlength,
+       targets,
+       tarlength,
+       hastarget,
+       residuals!,
+       criterion!,
 
        TotalJacobian,
        GEJacobian,
@@ -156,6 +157,9 @@ function __init__()
             end
         end
         include("solvers/gsl.jl")
+    end
+    @require NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56" begin
+        include("solvers/nlsolve.jl")
     end
     @require Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665" begin
         include("solvers/roots.jl")

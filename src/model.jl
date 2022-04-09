@@ -356,10 +356,17 @@ function criterion!(ss::SteadyState, inputs::AbstractVector;
     return resids'*weight*resids
 end
 
-function solve!(ST::Type{<:AbstractVectorRootSolver}, ss::SteadyState;
-        keepinits::Bool=false, kwargs...)
+function solve!(ST::Type, ss::SteadyState; keepinits::Bool=false, kwargs...)
     f!(y,x) = residuals!(y, ss, x)
     r = solve!(ST, f!, ss.inits; kwargs...)
+    keepinits || copyto!(ss.inits, r[1])
+    return getvarvals(ss)
+end
+
+function solve!(ca, ss::SteadyState; keepinits::Bool=false, kwargs...)
+    isrootsolvercache(ca) ||
+        return solve!(typeof(ca), ss; keepinits=keepinits, kwargs...)
+    r = solve!(ca, ss.inits; kwargs...)
     keepinits || copyto!(ss.inits, r[1])
     return getvarvals(ss)
 end

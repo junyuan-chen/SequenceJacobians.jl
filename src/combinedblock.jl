@@ -1,13 +1,25 @@
-struct CombinedBlock{HasJacTars, ST<:AbstractRootSolver, SS<:SteadyState, ins, outs} <: AbstractBlock{ins,outs}
+rootsolvercache(::Any, ::SteadyState; kwargs...) = nothing
+
+struct CombinedBlock{HasJacTars, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{ins,outs}
     ssins::Set{Symbol}
     ss::SS
+    sscache::CA
     ssargs::Dict{Symbol,Any}
     jactars::Vector{Symbol}
     jacargs::Dict{Symbol,Any}
     function CombinedBlock(ins::NTuple{NI,Symbol}, ssins::Set{Symbol},
             outs::NTuple{NO,Symbol}, ss::SS, ssargs::Dict{Symbol,Any},
             jactars::Vector{Symbol}, jacargs::Dict{Symbol,Any}, HasJacTars::Bool,
-            ::Type{ST}) where {NI,NO,SS<:SteadyState,ST<:AbstractRootSolver}
+            solver) where {NI,NO,SS<:SteadyState}
+        if isrootsolver(solver)
+            ST = solver isa Type ? solver : typeof(solver)
+            sscache = rootsolvercache(ST, ss; ssargs...)
+        elseif isrootsolvercache(solver)
+            ST = typeof(solver)
+            sscache = solver
+        else
+            throw(ArgumentError("solver is not recognized"))
+        end
         m = model(ss)
         # No duplicate is allowed for extracting varvals with ins
         ins = (unique(ins)...,)
@@ -41,13 +53,13 @@ struct CombinedBlock{HasJacTars, ST<:AbstractRootSolver, SS<:SteadyState, ins, o
         for v in jactars
             hastarget(ss, v) || throw(ArgumentError("$v is not a target for steady state"))
         end
-        return new{HasJacTars,ST,SS,ins,outs}(ssins, ss, ssargs, jactars, jacargs)
+        return new{HasJacTars,ST,SS,typeof(sscache),ins,outs}(
+            ssins, ss, sscache, ssargs, jactars, jacargs)
     end
 end
 
 function block(ss::SteadyState, ins, outs, jactars;
-        Solver::Type{<:AbstractRootSolver}=NoRootSolver, ssins=ins, ssargs=nothing,
-        jacargs=nothing)
+        solver=NoRootSolver, ssins=ins, ssargs=nothing, jacargs=nothing)
     ins = ins isa Union{Symbol,VarSpec} ? (ins,) : (ins...,)
     outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
@@ -59,7 +71,7 @@ function block(ss::SteadyState, ins, outs, jactars;
     HasJacTars = !isempty(jactars)
     ssargs = ssargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(ssargs...)
     jacargs = jacargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(jacargs...)
-    return CombinedBlock(ins, ssins, outs, ss, ssargs, jactars, jacargs, HasJacTars, Solver)
+    return CombinedBlock(ins, ssins, outs, ss, ssargs, jactars, jacargs, HasJacTars, solver)
 end
 
 function block(bs::Union{AbstractBlock,Vector{<:AbstractBlock}}, ins, outs, jactars,
@@ -79,7 +91,8 @@ outlength(b::CombinedBlock, r::Int) = length(getvarvals(b.ss)[outputs(b)[r]])
 
 function steadystate!(b::CombinedBlock, varvals::NamedTuple)
     b.ss.varvals[] = merge(getvarvals(b.ss), NamedTuple{inputs(b)}(varvals))
-    bvarvals = solve!(solvertype(b), b.ss; b.ssargs...)
+    ca = b.sscache
+    bvarvals = solve!(ca===nothing ? solvertype(b) : ca, b.ss; b.ssargs...)
     return merge(varvals, NamedTuple{outputs(b)}(bvarvals))
 end
 

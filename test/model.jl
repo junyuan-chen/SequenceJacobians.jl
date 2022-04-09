@@ -24,18 +24,18 @@ end
         @test getval(ss, :K) ≈ 3.1428571428570864 atol=1e-8
         @test getval(ss, :Z) ≈ 0.8816460975214576 atol=1e-8
 
-        @test_throws ArgumentError solve!(Roots_Default_Solver, ss)
+        @test_throws ArgumentError solve!(Roots_Default, ss)
     end
 
     @testset "KrusellSmith" begin
         using SequenceJacobians.KrusellSmith
-        bhh, bfirm, bmkt, bss = ksblocks()
-        m = model([bhh, bfirm, bmkt, bss])
+        bhh, bfirm, bmkt = ksblocks()
+        m = model([bhh, bfirm, bmkt])
         calis = [:eis=>1, :δ=>0.025, :α=>0.11, :L=>1]
-        tars = [:rss=>0.01, :Yss=>1, :asset_mkt=>0]
+        tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
         ss =  SteadyState(m, calis, inits, tars)
-        @test targets(ss) == (:Yss, :rss, :asset_mkt)
+        @test targets(ss) == (:Y, :r, :asset_mkt)
         # NLsolve reevaluates Jacobians too many times
         solve!(GSL_Hybrids, ss, xtol=1e-10)
         # Compare results with original Python package

@@ -4,7 +4,7 @@
         bfirm, bhh, bmkt, bss = rbcblocks()
         m = model([bfirm, bhh, bmkt, bss])
         calis = [:L=>1, :r=>0.01, :eis=>1, :frisch=>1, :δ=>0.025, :α=>0.11]
-        tars = [:goods_mkt=>0, :rss=>0.01, :euler=>0, :Yss=>1]
+        tars = [:goods_mkt=>0, :r=>0.01, :euler=>0, :Y=>1]
         inits = [:φ=>0.9, :β=>0.99, :K=>2, :Z=>1]
         ss = SteadyState(m, calis, inits, tars)
         f!(y,x) = residuals!(y, ss, x)
@@ -41,14 +41,14 @@
 
     @testset "KrusellSmith" begin
         using SequenceJacobians.KrusellSmith
-        bhh, bfirm, bmkt, bss = ksblocks()
-        m = model([bhh, bfirm, bmkt, bss])
+        bhh, bfirm, bmkt = ksblocks()
+        m = model([bhh, bfirm, bmkt])
         calis = [:eis=>1, :δ=>0.025, :α=>0.11, :L=>1]
-        tars = [:rss=>0.01, :Yss=>1, :asset_mkt=>0]
+        tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
         ss =  SteadyState(m, calis, inits, tars)
         solve!(GSL_Hybrids, ss, xtol=1e-10)
-        J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(bss, :goods_mkt))
+        J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
         GJ = GEJacobian(J, :Z, keepH_U=true)
         G = getG!(GJ, :Z, :C)
         # Compare results with original Python package

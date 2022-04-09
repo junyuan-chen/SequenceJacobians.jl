@@ -5,7 +5,8 @@ using Base: has_offset_axes
 using GSL
 using LinearAlgebra
 using LoopVectorization
-using Roots: Brent
+using NLsolve
+using Roots: Brent, Secant
 using SequenceJacobians: ValType, jacbyinput
 
 if VERSION >= v"1.7" && Sys.isapple()

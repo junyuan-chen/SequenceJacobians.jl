@@ -1,20 +1,41 @@
 export GSL_MultirootFSolver, GSL_MultirootFSolverCache, GSL_Hybrids
 
-abstract type GSL_MultirootFSolver <: AbstractVectorRootSolver end
+abstract type GSL_MultirootFSolver end
 
-struct GSL_MultirootFSolverCache{V,S} <: AbstractSolverCache
+isvectorrootsolver(::GSL_MultirootFSolver) = true
+isvectorrootsolver(::Type{<:GSL_MultirootFSolver}) = true
+
+struct GSL_MultirootFSolverCache{F,V,S}
     N::Int
+    cfunc::F
     vinit::V
     solver::S
 end
 
+isrootsolvercache(::GSL_MultirootFSolverCache) = true
+
 struct GSL_Hybrids <: GSL_MultirootFSolver end
 
-function GSL_MultirootFSolverCache(::Type{GSL_Hybrids}, N::Int)
+function GSL_MultirootFSolverCache(::Type{GSL_Hybrids}, f!::Function, N::Int)
+    function _f(x_vec, p, y_vec)
+        x = GSL.wrap_gsl_vector(x_vec)
+        y = GSL.wrap_gsl_vector(y_vec)
+        # Switch the order of arguments
+        f!(y, x)
+        return Cint(GSL.GSL_SUCCESS)
+    end
+    cfunc = @cfunction($_f, Cint, (Ptr{GSL.gsl_vector}, Ptr{Cvoid}, Ptr{GSL.gsl_vector}))
     vinit = GSL.vector_alloc(N)
     solver = GSL.multiroot_fsolver_alloc(GSL.gsl_multiroot_fsolver_hybrids, N)
-    return GSL_MultirootFSolverCache{typeof(vinit),typeof(solver)}(N, vinit, solver)
+    return GSL_MultirootFSolverCache{typeof(cfunc),typeof(vinit),typeof(solver)}(
+        N, cfunc, vinit, solver)
 end
+
+rootsolvercache(::Type{ST}, ss::SteadyState; kwargs...) where ST<:GSL_MultirootFSolver =
+    GSL_MultirootFSolverCache(ST, (y,x)->residuals!(y,ss,x), inlength(ss))
+
+rootsolvercache(s::GSL_MultirootFSolver, ss::SteadyState; kwargs...) =
+    rootsolvercache(typeof(s), ss)
 
 function _setvinit!(ca::GSL_MultirootFSolverCache, x0::AbstractArray)
     for (i, v) in enumerate(x0)
@@ -59,8 +80,19 @@ function _solve!(ca::GSL_MultirootFSolverCache, xtol, ftol, maxiter, verbose, pg
     return sol, converged
 end
 
+function solve!(ca::GSL_MultirootFSolverCache, x0::AbstractArray;
+        xtol::Real=1e-8, ftol::Real=Inf, maxiter::Int=1000, verbose=false)
+    ca.N == length(x0) || throw(DimensionMismatch(
+        "the length of x0 does not match the solver cache"))
+    verbose, pgap = _verbose(verbose)
+    _setvinit!(ca, x0)
+    gsl_func = GSL.gsl_multiroot_function(Base.unsafe_convert(Ptr{Cvoid}, ca.cfunc), ca.N, 0)
+    GSL.multiroot_fsolver_set(ca.solver, gsl_func, ca.vinit)
+    return _solve!(ca, xtol, ftol, maxiter, verbose, pgap)
+end
+
 function solve!(ca::GSL_MultirootFSolverCache, f!, x0::AbstractArray;
-        xtol::Real=1e-8, ftol::Real=Inf, maxiter::Int=1000, verbose=false, kwargs...)
+        xtol::Real=1e-8, ftol::Real=Inf, maxiter::Int=1000, verbose=false)
     ca.N == length(x0) || throw(DimensionMismatch(
         "the length of x0 does not match the solver cache"))
     verbose, pgap = _verbose(verbose)
@@ -82,9 +114,12 @@ function solve!(ca::GSL_MultirootFSolverCache, f!, x0::AbstractArray;
 end
 
 function solve!(t::Type{<:GSL_MultirootFSolver}, f!, x0::AbstractArray; kwargs...)
-    ca = GSL_MultirootFSolverCache(t, length(x0))
-    res = solve!(ca, f!, x0; kwargs...)
+    ca = GSL_MultirootFSolverCache(t, f!, length(x0))
+    res = solve!(ca, x0; kwargs...)
     GSL.multiroot_fsolver_free(ca.solver)
     GSL.vector_free(ca.vinit)
     return res
 end
+
+solve!(s::GSL_MultirootFSolver, f!, x0::AbstractArray; kwargs...) =
+    solve!(typeof(s), f!, x0; kwargs...)

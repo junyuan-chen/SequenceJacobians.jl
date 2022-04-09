@@ -1,21 +1,35 @@
-export Roots_Solver, Roots_Default_Solver
+export Roots_Default
 
-struct Roots_Solver{T<:Union{Roots.AbstractUnivariateZeroMethod,Nothing}} <: AbstractScalarRootSolver end
+# Abstract types are renamed in Roots v2 with old names kept as alias
+const AcceptedRootsMethod = Union{<:Roots.AbstractBracketing, <:Roots.AbstractSecant}
 
-const Roots_Default_Solver = Roots_Solver{Nothing}
+isscalarrootsolver(::AcceptedRootsMethod) = true
+isscalarrootsolver(::Type{<:AcceptedRootsMethod}) = true
 
-function solve!(t::Type{Roots_Solver{T}}, f, x0; kwargs...) where T
+struct Roots_Default end
+
+isscalarrootsolver(::Roots_Default) = true
+isscalarrootsolver(::Type{Roots_Default}) = true
+
+function solve!(::Type{T}, f, x0; kwargs...) where T <: AcceptedRootsMethod
     z = Roots.solve(Roots.ZeroProblem(f, x0), T(); kwargs...)
     return z, true
 end
 
-function solve!(t::Type{Roots_Default_Solver}, f, x0; kwargs...)
+function solve!(M::AcceptedRootsMethod, f, x0; kwargs...)
+    z = Roots.solve(Roots.ZeroProblem(f, x0), M; kwargs...)
+    return z, true
+end
+
+function solve!(::Type{Roots_Default}, f, x0; kwargs...)
     z = Roots.solve(Roots.ZeroProblem(f, x0); kwargs...)
     return z, !isnan(z)
 end
 
-function solve!(ST::Type{Roots_Solver{T}}, ss::SteadyState{TF};
-        x0=nothing, kwargs...) where {T,TF}
+solve!(s::Roots_Default, f, x0; kwargs...) = solve!(typeof(s), f, x0; kwargs...)
+
+function solve!(ST::Type{T}, ss::SteadyState{TF}; x0=nothing, kwargs...) where
+        {T<:Union{AcceptedRootsMethod, Roots_Default}, TF<:AbstractFloat}
     inlength(ss) == tarlength(ss) == 1 || throw(ArgumentError(
         "$ST is not accepted for multi-dimensional problems"))
     function f(x)
