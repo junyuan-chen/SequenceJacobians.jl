@@ -1,4 +1,3 @@
-const ValType{T} = Union{T, AbstractArray{T}} where {T<:Real}
 const ValidCache = Union{Dict{Symbol},Nothing}
 
 struct VarSpec
@@ -71,7 +70,8 @@ function _inout(ins, outs, ssins)
     return ins, invars, ssins, outs
 end
 
-block(f::Function, ins, outs; ssins=ins, cache=nothing) =
+# Allow irrelevant kwargs for @implicit
+block(f::Function, ins, outs; ssins=ins, cache=nothing, kwargs...) =
     SimpleBlock(_inout(ins, outs, ssins)..., cache, f)
 
 hascache(b::SimpleBlock{Nothing}) = false

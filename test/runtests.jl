@@ -7,7 +7,7 @@ using LinearAlgebra
 using LoopVectorization
 using NLsolve
 using Roots: Brent, Secant
-using SequenceJacobians: ValType, jacbyinput
+using SequenceJacobians: jacbyinput
 
 if VERSION >= v"1.7" && Sys.isapple()
     using OpenBLAS32_jll

@@ -6,6 +6,8 @@ using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, I, UniformScaling, LU, lu!, ldiv!, norm, dot, stride1
 using LinearMaps
+using MacroTools
+using MacroTools: postwalk
 using Requires
 using SplitApplyCombine: splitdimsview
 using Statistics: mean
@@ -123,6 +125,9 @@ export supconverged,
 
        SolvedBlock,
 
+       @simple,
+       @implicit,
+
        Transition,
 
        linirf,
@@ -139,6 +144,7 @@ include("model.jl")
 include("jacobian.jl")
 include("combinedblock.jl")
 include("solvedblock.jl")
+include("macros.jl")
 include("transition.jl")
 include("irf.jl")
 include("examples/utils.jl")

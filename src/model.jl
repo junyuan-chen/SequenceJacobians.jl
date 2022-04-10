@@ -1,5 +1,5 @@
-const ValidVarInput = Union{Pair{Symbol,<:ValType}, Vector{<:Pair{Symbol,<:ValType}},
-    Dict{Symbol,<:ValType}}
+const ValidVarInput = Union{Pair{Symbol,<:Any}, Vector{<:Pair{Symbol,<:Any}},
+    Dict{Symbol,<:Any}}
 const BlockOrVar = Union{AbstractBlock, Symbol}
 
 struct SequenceSpaceModel <: AbstractGraph{Int}
@@ -197,7 +197,7 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
         for (k, v) in initials
             if v isa Real
                 v = convert(TF, v)
-            else
+            elseif v isa AbstractArray
                 v = convert(AbstractArray{TF}, v)
             end
             varvals = merge(varvals, (; k=>v))

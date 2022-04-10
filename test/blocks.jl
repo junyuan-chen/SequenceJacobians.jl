@@ -109,16 +109,16 @@ end
 end
 
 @testset "CombinedBlock" begin
-    using SequenceJacobians.TwoAsset
-    pricing = SequenceJacobians.TwoAsset.pricing
-    ins = (:mc, lead(:r), :Y, lead(:Y), :κp, :mup)
+    using SequenceJacobians: TwoAsset as ta
+    ins0 = (:pip, :mc, :r, :Y, :κp, :mup, lead(:r), lead(:pip), lead(:Y))
     outs = :pip
-    bpricing = block(pricing, (:pip, lead(:pip), ins...), :nkpc)
+    bpricing = block(ta.pricing, ins0, :nkpc)
     mpricing = model(bpricing)
     sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :pip=>0.1, :nkpc=>0)
-    @test_throws ArgumentError block(sspricing, ins, outs, :nkpc)
-    b = block(sspricing, ins, outs, :nkpc, solver=Roots_Default)
     ins = (:mc, :r, :Y, :κp, :mup)
+    @test_throws ArgumentError block(sspricing, ins, outs, :nkpc)
+    @test_throws ArgumentError block(sspricing, ins0, outs, :nkpc, solver=Roots_Default)
+    b = block(sspricing, ins, outs, :nkpc, solver=Roots_Default)
     @test inputs(b) == ins
     @test invars(b) == ins
     @test ssinputs(b) == Set(ins)
@@ -126,6 +126,7 @@ end
     @test !hascache(b)
     @test outlength(b) == 1
     @test outlength(b, 1) == 1
+    @test model(b) === mpricing
     varvals = getvarvals(sspricing)
     steadystate!(b, varvals)
     @test getval(b.ss, :pip) ≈ 0 atol=1e-8
@@ -145,10 +146,10 @@ end
     @test all(isapprox.(J.Gs[:Y][:pip], 0, atol=1e-8))
     @test all(isapprox.(J.Gs[:r][:pip], 0, atol=1e-8))
 
-    arbitrage = SequenceJacobians.TwoAsset.arbitrage
-    ins = (lead(:div), lead(:r))
+    ins0 = (:p, :div, :r, lead(:r), lead(:div), lead(:p))
     outs = :p
-    barbitrage = block(arbitrage, (:p, lead(:p), ins...), :equity)
+    barbitrage = block(ta.arbitrage, ins0, :equity)
+    ins = (:div, :r)
     b = block(barbitrage, ins, outs, :equity, [:div=>0.14, :r=>0.0125], :p=>10, :equity=>0,
         solver=Brent(), ssargs=(:x0=>(5,15),))
     varvals = steadystate!(b, getvarvals(b.ss))
@@ -165,10 +166,10 @@ end
           0 0           0            ]
     @test J.Gs[:r][:p] ≈ Jr atol=1e-8
 
-    labor = SequenceJacobians.TwoAsset.labor
-    investment = SequenceJacobians.TwoAsset.investment
-    blabor = block(labor, [:Y, :w, lag(:K), :Z, :α], [:N, :mc])
-    binvest = block(investment, [:Q, lead(:Q), :K, lag(:K), lead(:K), lead(:r), lead(:N), lead(:mc), lead(:Z), :δ, :εI, :α], [:inv, :val])
+    blabor = block(ta.labor, (:Y, :w, :K, :Z, :α, lag(:K)), (:N, :mc))
+    ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lead(:r), lead(:K), lead(:Q), lead(:mc),
+        lag(:K), lead(:Z), lead(:N)]
+    binvest = block(ta.investment, ins0, [:inv, :val])
     calis = [:Y, :w, :Z, :α, :r, :δ, :εI]
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K], [:inv, :val],
         calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4],
@@ -190,14 +191,8 @@ end
 end
 
 @testset "SolvedBlock" begin
-    using SequenceJacobians.TwoAsset
-    pricing = SequenceJacobians.TwoAsset.pricing
-    ins = [:mc, lead(:r), :Y, lead(:Y), :κp, :mup]
-    outs = :pip
-    bpricing = block(pricing, union([:pip, lead(:pip)], ins), :nkpc)
-    mpricing = model(bpricing)
-    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :pip=>0.1, :nkpc=>0)
-    b = block(sspricing, ins, outs, :nkpc, solver=Roots_Default)
+    using SequenceJacobians: TwoAsset as ta
+    b = ta.pricing_block()
     varvals = steadystate!(b, getvarvals(b.ss))
     J = jacobian(b, 3, varvals)
     bj = block(b, J)
@@ -213,4 +208,53 @@ end
     @test jacbyinput(bj) == false
     @test jacobian(bj, 3, varvals) === J
     @test_throws ErrorException jacobian(bj, 5, varvals)
+end
+
+const tassvals = (β = 0.9762739008880043, eis = 0.5, χ0 = 0.25, χ1 = 6.416419594214106,
+    χ2 = 2, w = 0.66, ρ_z = 0.966, σ_z = 0.92, Y = 1.0, Z = 0.4677898145312322,
+    α = 0.3299492385786802, r = 0.0125, δ = 0.02, εI = 4, κp = 0.1,
+    mup = 1.015228426395939, rstar = 0.0125, φ = 1.5, G = 0.2, Bg = 2.8, tot_wealth = 14,
+    Bh = 1.04, ω = 0.005, κw = 0.1, muw = 1.1, vφ = 1.71347594405051,
+    frisch = 1.0, Q = 1.0, K = 10.0, N = 1.0, mc = 0.985, inv = 0.0, val = 0.0,
+    pip = 0.0, nkpc = 0.0, piw = 0.0, i = 0.012499999999379603, ψp = 0.0,
+    I = 0.2, div = 0.14, p = 11.2, equity = 0.0, pshare = 0.864197530864201,
+    rb = 0.0075, ra = 0.0125, fisher = 0.0, tax = 0.3560606060606061,
+    A = 12.96, B = 1.04, C = 0.5820937276337769, UCE = 4.434878914013147,
+    CHI = 0.012706305302404831, wnkpc = 0.0, asset_mkt = 0.0, wealth = 14.0, goods_mkt = 0.0)
+
+compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
+    all(k->isapprox(a[k], b[k], atol=tol), keys(a))
+
+@testset "TwoAsset" begin
+    using SequenceJacobians: TwoAsset as ta
+    @testset "SimpleBlock" begin
+        bdividend = ta.dividend_block()
+        @test compare(steadystate!(bdividend, tassvals), tassvals, 1e-8)
+        btaylor = ta.taylor_block()
+        @test compare(steadystate!(btaylor, tassvals), tassvals, 1e-8)
+        bfiscal = ta.fiscal_block()
+        @test compare(steadystate!(bfiscal, tassvals), tassvals, 1e-8)
+        bfinance = ta.finance_block()
+        @test compare(steadystate!(bfinance, tassvals), tassvals, 1e-8)
+        bwage = ta.wage_block()
+        @test compare(steadystate!(bwage, tassvals), tassvals, 1e-8)
+        bunion = ta.union_block()
+        @test compare(steadystate!(bunion, tassvals), tassvals, 1e-8)
+        bmkt_clearing = ta.mkt_clearing_block()
+        @test compare(steadystate!(bmkt_clearing, tassvals), tassvals, 1e-7)
+        bshare_value = ta.share_value_block()
+        @test compare(steadystate!(bshare_value, tassvals), tassvals, 1e-8)
+        bpartial_ss = ta.partial_ss_block()
+        @test compare(steadystate!(bpartial_ss, tassvals), tassvals, 1e-7)
+        bunion_ss = ta.union_ss_block()
+        @test compare(steadystate!(bunion_ss, tassvals), tassvals, 1e-8)
+    end
+    @testset "CombinedBlock" begin
+        bpricing = ta.pricing_block()
+        @test compare(steadystate!(bpricing, tassvals), tassvals, 1e-8)
+        barbitrage = ta.arbitrage_block()
+        @test compare(steadystate!(barbitrage, tassvals), tassvals, 1e-8)
+        bproduction = ta.production_block()
+        @test compare(steadystate!(bproduction, tassvals), tassvals, 1e-8)
+    end
 end

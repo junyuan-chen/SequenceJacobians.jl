@@ -58,8 +58,9 @@ struct CombinedBlock{HasJacTars, ST, SS<:SteadyState, CA, ins, outs} <: Abstract
     end
 end
 
+# Allow irrelevant kwargs for @implicit
 function block(ss::SteadyState, ins, outs, jactars;
-        solver=NoRootSolver, ssins=ins, ssargs=nothing, jacargs=nothing)
+        solver=NoRootSolver, ssins=ins, ssargs=nothing, jacargs=nothing, kwargs...)
     ins = ins isa Union{Symbol,VarSpec} ? (ins,) : (ins...,)
     outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
@@ -88,6 +89,7 @@ solvertype(::CombinedBlock{HasJacTars,ST}) where {HasJacTars,ST} = ST
 
 outlength(b::CombinedBlock) = sum(vo->length(getvarvals(b.ss)[vo]), outputs(b))
 outlength(b::CombinedBlock, r::Int) = length(getvarvals(b.ss)[outputs(b)[r]])
+model(b::CombinedBlock) = model(b.ss)
 
 function steadystate!(b::CombinedBlock, varvals::NamedTuple)
     b.ss.varvals[] = merge(getvarvals(b.ss), NamedTuple{inputs(b)}(varvals))
