@@ -20,7 +20,8 @@ const tests = [
     "lawofmotion",
     "blocks",
     "model",
-    "jacobian"
+    "jacobian",
+    "twoasset"
 ]
 
 printstyled("Running tests:\n", color=:blue, bold=true)

@@ -70,7 +70,7 @@ function steadystate!(b::HetBlock, varvals::NamedTuple)
     backconverged = _backwardss!(ha, invals, maxbackiter, backtol, verbose, pgap)
     # Forward iterations
     forward_init!(ha, invals...)
-    maxforiter = get(b.ssargs, :maxforiter, 1000)
+    maxforiter = get(b.ssargs, :maxforiter, 5000)
     fortol = get(b.ssargs, :fortol, 1e-10)
     forconverged = _forwardss!(ha, invals, maxforiter, fortol, verbose, pgap)
     backconverged && forconverged && (b.jacargs[:ssfound] = true)

@@ -230,7 +230,7 @@ function (*)(S1::ShiftMap, S2::ShiftMap)
     return ShiftMap(S1.S*S2.S, S1.N)
 end
 
-function Base.:(*)(A::CompositeMap, S::ShiftMap)
+function Base.:(*)(A::CompositeMap{T}, S::ShiftMap{T}) where T
     Afirst = first(A.maps)
     if Afirst isa UniformScalingMap
         A2 = ShiftMap(Afirst.S*S.S, S.N)
@@ -240,10 +240,10 @@ function Base.:(*)(A::CompositeMap, S::ShiftMap)
     end
 end
 
-function (*)(S::ShiftMap, A::CompositeMap)
+function (*)(S::ShiftMap{T}, A::CompositeMap{T}) where T
     Alast = last(A.maps)
     if Alast isa ShiftMap
-        A2 = ShiftMap(S.S*Alast, S.N)
+        A2 = ShiftMap(S.S*Alast.S, S.N)
         return CompositeMap{T}(tuple(Base.front(A.maps)..., A2))
     else
         return CompositeMap{T}(tuple(A.maps..., S))

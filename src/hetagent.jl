@@ -123,8 +123,7 @@ The returned object must contain names of the policies
 associated with the endogenous states
 and places them in the beginning in the same order as
 how the states are indexed by the object returned by [`endostates`](@ref).
-Each element of the returned object must be accepted by
-[`getpolicy`](@ref) and [`getlastpolicy`](@ref).
+Each element of the returned object must be accepted by [`getpolicy`](@ref).
 """
 function policies end
 
@@ -135,7 +134,6 @@ Return the object that holds the policy `n` associated with
 the current step of backward iteration from `ha`.
 The fallback method assumes that `n` is a property of `ha`
 and returns this property.
-See also [`getlastpolicy`](@ref).
 """
 getpolicy(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
 
@@ -145,15 +143,36 @@ getpolicy(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
 end
 
 """
-    getlastpolicy(ha::AbstractHetAgent, n::Symbol)
+    backwardtargets(ha::AbstractHetAgent)
 
-Return the object that holds the policy `n` associated with
-the previous step of backward iteration from `ha`.
+Return an iterable object that contains all names used for identifying variables
+that are used for determining the convergence of backward iteration from `ha`.
+Each element of the returned object must be accepted by [`getbackwardtarget`](@ref).
+The fallback method passes `ha` to [`policies`](@ref).
+"""
+backwardtargets(ha::AbstractHetAgent) = policies(ha)
+
+"""
+    getbackwardtarget(ha::AbstractHetAgent, n::Symbol)
+
+Return the object named `n` from `ha` that holds values obtained
+from the current step of backward iteration for determining the convergence.
+The fallback method assumes that `n` is a property of `ha`
+and returns this property.
+See also [`getlastbackwardtarget`](@ref).
+"""
+getbackwardtarget(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
+
+"""
+    getlastbackwardtarget(ha::AbstractHetAgent, n::Symbol)
+
+Return the object named `n` from `ha` that holds values obtained
+from the last step of backward iteration for determining the convergence.
 The fallback method assumes that `Symbol(n, :last)` is a property of `ha`
 and returns this property.
-See also [`getpolicy`](@ref).
+See also [`getbackwardtarget`](@ref).
 """
-getlastpolicy(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, Symbol(n, :last))
+getlastbackwardtarget(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, Symbol(n, :last))
 
 """
     getdist(ha::AbstractHetAgent)
@@ -223,9 +242,8 @@ A fallback method is selected based on [`HetAgentStyle`](@ref).
 backward!(ha::AbstractHetAgent, invals...) = backward!(HetAgentStyle(ha), ha, invals...)
 
 function backward!(::TimeDiscrete, ha::AbstractHetAgent, invals...)
-    for n in policies(ha)
-        copyto!(getlastpolicy(ha, n), getpolicy(ha, n))
-    end
+    foreach(n->copyto!(getlastbackwardtarget(ha, n), getbackwardtarget(ha, n)),
+        backwardtargets(ha))
     backward_exog!(ha)
     backward_endo!(ha, expectedvalues(ha)..., invals...)
 end
@@ -246,6 +264,8 @@ backward_steadystate!(hs::TimeDiscrete, ha, invals...) = backward!(hs, ha, inval
     backward_init!(ha::AbstractHetAgent, invals...)
 
 Initialize data objects contained in `ha` before backward iteration.
+Assigning initial values only to data underlying [`valuevars`](@ref)
+should be sufficient for typical problems.
 The fallback method returns `nothing` without making any change.
 """
 backward_init!(::AbstractHetAgent, invals...) = nothing
@@ -268,7 +288,8 @@ The fallback method returns `true` if [`supconverged`](@ref) returns `true`
 for all pairs of current and last policies while disregarding `status`.
 """
 backward_converged(ha::AbstractHetAgent, st, tol::Real=1e-8) =
-    all(n->supconverged(getpolicy(ha, n), getlastpolicy(ha, n), tol), policies(ha))
+    all(n->supconverged(getbackwardtarget(ha, n), getlastbackwardtarget(ha, n), tol),
+        backwardtargets(ha))
 
 """
     forward!(ha::AbstractHetAgent, invals...)

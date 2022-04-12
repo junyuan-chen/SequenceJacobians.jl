@@ -69,7 +69,7 @@ macro simple(args...)
     fargs = (ins..., map(x->Symbol(x.args...), leadlags)...)
     ins = _parseins((ins..., leadlags...))
     isempty(outs) && error("explicit return statement is not found")
-    # If multiple return statements exist, only consider the first one
+    # If multiple return statements exist, only consider the first one found
     outs = _parseouts(outs[1][1])
     blkf = Symbol(f, :_block)
     return quote
@@ -82,86 +82,50 @@ macro simple(args...)
     end
 end
 
-function _parsetarnames(expr)
-    msg = "return statement is not in the required format"
-    isexpr(expr, :tuple) && length(expr.args) === 3 || error(msg)
-    tars = expr.args[2]
-    if tars isa Symbol
-        return tars
-    elseif isexpr(tars, :(=))
-        return tars.args[1]
-    elseif isexpr(tars, :tuple)
-        outs = :(())
-        for x in tars.args
-            if x isa Symbol
-                push!(outs.args, x)
-            elseif isexpr(x, :(=))
-                push!(outs.args, x.args[1])
-            else
-                error(msg)
-            end
-        end
-        return outs
-    else
-        error(msg)
-    end
-end
-
-function _walkbodyimplicit(x, leadlags, rawrets, tarnames)
+function _walkbodyimplicit(x, leadlags, args, parsedrets)
     if _isleadlag(x)
         push!(leadlags, x)
         return Symbol(x.args...)
     elseif isexpr(x, :return)
-        push!(rawrets, x.args[1])
-        x = _parsetarnames(x.args[1])
-        push!(tarnames, x)
-        return :(return $x)
+        parsedret = _parsereturnimplicit(x.args[1], args)
+        push!(parsedrets, parsedret)
+        ret = parsedret[1]
+        return :(return $ret)
     end
     return x
 end
 
 function _parseargsimplicit(exprs)
-    ins = []
+    args = []
     vals = []
     for x in exprs
         if isexpr(x, :kw)
-            push!(ins, x.args[1])
+            push!(args, x.args[1])
             push!(vals, x.args[1]=>x.args[2])
         else
             error("unrecognized expression in arguments")
         end
     end
-    return ins, vals
+    return args, vals
 end
 
-function _parsereturnimplicit(rawrets)
+function _parsereturnimplicit(rawret, args)
     msg = "return statement is not in the required format"
+    isexpr(rawret, :tuple) && length(rawret.args) === 3 || error(msg)
+    retexpr = :(())
     outs = Symbol[]
-    outexprs = :(())
-    rawout = rawrets.args[1]
-    if rawout isa Symbol
-        push!(outs, rawout)
-        push!(outexprs.args, Expr(:quote, rawout))
-    elseif isexpr(rawout, :tuple)
-        for x in rawout.args
-            x isa Symbol ? push!(outs, x) : error(msg)
-            push!(outexprs.args, Expr(:quote, x))
-        end
-    else
-        error(msg)
-    end
-    tars = Pair{Symbol}[]
-    rawtar = rawrets.args[2]
-    if rawtar isa Symbol
-        push!(tars, rawtar=>0)
-    elseif isexpr(rawtar, :(=))
-        push!(tars, rawtar.args[1]=>rawtar.args[2])
-    elseif isexpr(rawtar, :tuple)
-        for x in rawtar.args
+    outquote = :(())
+    out = rawret.args[1]
+    if out isa Symbol
+        out in args || push!(retexpr.args, out)
+        push!(outs, out)
+        push!(outquote.args, Expr(:quote, out))
+    elseif isexpr(out, :tuple)
+        for x in out.args
             if x isa Symbol
-                push!(tars, x=>0)
-            elseif isexpr(x, :(=))
-                push!(tars, x.args[1]=>x.args[2])
+                out in args || push!(retexpr.args, x)
+                push!(outs, x)
+                push!(outquote.args, Expr(:quote, x))
             else
                 error(msg)
             end
@@ -169,23 +133,53 @@ function _parsereturnimplicit(rawrets)
     else
         error(msg)
     end
-    solver = rawrets.args[3]
+    tars = Pair{Symbol}[]
+    tarquote = :(())
+    rawtar = rawret.args[2]
+    if rawtar isa Symbol
+        push!(retexpr.args, rawtar)
+        push!(tars, rawtar=>0)
+        push!(tarquote.args, Expr(:quote, rawtar))
+    elseif isexpr(rawtar, :(=))
+        v = rawtar.args[1]
+        push!(retexpr.args, v)
+        push!(tars, v=>rawtar.args[2])
+        push!(tarquote.args, Expr(:quote, v))
+    elseif isexpr(rawtar, :tuple)
+        for x in rawtar.args
+            if x isa Symbol
+                push!(retexpr.args, x)
+                push!(tars, x=>0)
+                push!(tarquote.args, Expr(:quote, x))
+            elseif isexpr(x, :(=))
+                v = x.args[1]
+                push!(retexpr.args, v)
+                push!(tars, v=>x.args[2])
+                push!(tarquote.args, Expr(:quote, v))
+            else
+                error(msg)
+            end
+        end
+    else
+        error(msg)
+    end
+    solver = rawret.args[3]
     if solver isa Symbol || isexpr(solver, :.)
-        return outs, outexprs, tars, solver
+        return retexpr, outs, outquote, tars, tarquote, solver
     elseif isexpr(solver, :call) && length(solver.args)==1
-        return outs, outexprs, tars, solver.args[1]
+        return retexpr, outs, outquote, tars, tarquote, solver.args[1]
     else
         error(msg)
     end
 end
 
 function _parsevals(vals, outs)
-    inits = Pair{Symbol}[]
     calis = Pair{Symbol}[]
+    inits = Pair{Symbol}[]
     for val in vals
         push!(val[1] in outs ? inits : calis, val)
     end
-    return inits, calis
+    return calis, inits
 end
 
 macro implicit(args...)
@@ -195,28 +189,26 @@ macro implicit(args...)
     @capture(func, function f_(ins__) body_ end) ||
         throw(ArgumentError("the last argument of @implicit must be a function block"))
     kwargs = narg > 1 ? args[1:end-1] : ()
-    ins, vals = _parseargsimplicit(ins)
+    args, vals = _parseargsimplicit(ins)
     leadlags = Set{Expr}()
-    rawrets = []
-    tarnames = []
-    body = postwalk(x->_walkbodyimplicit(x, leadlags, rawrets, tarnames), body)
+    parsedrets = []
+    body = postwalk(x->_walkbodyimplicit(x, leadlags, args, parsedrets), body)
     leadlags = (leadlags...,)
-    fargs = (ins..., map(x->Symbol(x.args...), leadlags)...)
-    unknowns = _parseins((ins..., leadlags...))
-    isempty(rawrets) && error("explicit return statement is not found")
-    # If multiple return statements exist, only consider the first one
-    outs, outexprs, tars, solver = _parsereturnimplicit(rawrets[1])
-    tarexprs = _parseouts(tarnames[1])
-    inits, calis = _parsevals(vals, outs)
-    inexprs = _parseins(ntuple(i->calis[i][1], length(calis)))
+    fargs = (args..., map(x->Symbol(x.args...), leadlags)...)
+    argquote = _parseins((args..., leadlags...))
+    isempty(parsedrets) && error("explicit return statement is not found")
+    # If multiple return statements exist, only consider the first one found
+    _, outs, outquote, tars, tarquote, solver = parsedrets[1]
+    calis, inits = _parsevals(vals, outs)
+    inquote = _parseins(ntuple(i->calis[i][1], length(calis)))
     blkf = Symbol(f, :_block)
     return quote
         function $(esc(f))($(map(esc, fargs)...))
             $(esc(body))
         end
         function $(esc(blkf))()
-            b = block($(esc(f)), $unknowns, $tarexprs; ($(map(esc, kwargs)...),)...)
-            return block(b, $inexprs, $outexprs, $tarexprs,
+            b = block($(esc(f)), $argquote, $tarquote; ($(map(esc, kwargs)...),)...)
+            return block(b, $inquote, $outquote,
                 $(esc(calis)), $(esc(inits)), $(esc(tars));
                 solver=$(esc(solver)), ($(map(esc, kwargs)...),)...)
         end

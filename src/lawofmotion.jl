@@ -62,27 +62,27 @@ Compute the expected values `ev` over the state space
 given the realized values `v` in the next period and
 the exogenous law of motion `ps`.
 """
-backward!(ev::AbstractMatrix, v::AbstractMatrix, p::ExogProc) = mul!(ev, v, p.m')
+@inline backward!(ev::AbstractMatrix, v::AbstractMatrix, p::ExogProc) = mul!(ev, v, p.m')
 
-function backward!(ev::AbstractArray{T,3}, v::AbstractArray{T,3}, p::ExogProc) where T
+@inline function backward!(ev::AbstractArray{T,3}, v::AbstractArray{T,3}, p::ExogProc) where T
     @tullio ev[i,j,k] = v[i,j,l] * p.m[k,l]
 end
 
-function backward!(ev::AbstractArray{T,3}, v::AbstractArray{T,3}, p1::ExogProc,
+@inline function backward!(ev::AbstractArray{T,3}, v::AbstractArray{T,3}, p1::ExogProc,
         p2::ExogProc) where T
     @tullio ev[i,j,k] = v[i,l,m] * p1.m[j,l] * p2.m[k,m]
 end
 
-function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p::ExogProc) where T
+@inline function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p::ExogProc) where T
     @tullio ev[i,j,k,l] = v[i,j,k,m] * p.m[l,m]
 end
 
-function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p1::ExogProc,
+@inline function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p1::ExogProc,
         p2::ExogProc) where T
     @tullio ev[i,j,k,l] = v[i,j,m,n] * p1.m[k,m] * p2.m[l,n]
 end
 
-function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p1::ExogProc,
+@inline function backward!(ev::AbstractArray{T,4}, v::AbstractArray{T,4}, p1::ExogProc,
         p2::ExogProc, p3::ExogProc) where T
     @tullio ev[i,j,k,l] = v[i,m,n,o] * p1.m[j,m] * p2.m[k,n] * p3.m[l,o]
 end
@@ -94,27 +94,27 @@ Compute the distribution of agents over the state space in the next period
 given the initial distribution `D` and the exogenous law of motion `ps`.
 Results are saved in `out`.
 """
-forward!(out::AbstractMatrix, D::AbstractMatrix, p::ExogProc) = mul!(out, D, p.m)
+@inline forward!(out::AbstractMatrix, D::AbstractMatrix, p::ExogProc) = mul!(out, D, p.m)
 
-function forward!(out::AbstractArray{T,3}, D::AbstractArray{T,3}, p::ExogProc) where T
+@inline function forward!(out::AbstractArray{T,3}, D::AbstractArray{T,3}, p::ExogProc) where T
     @tullio out[i,j,k] = D[i,j,l] * p.m[l,k]
 end
 
-function forward!(out::AbstractArray{T,3}, D::AbstractArray{T,3}, p1::ExogProc,
+@inline function forward!(out::AbstractArray{T,3}, D::AbstractArray{T,3}, p1::ExogProc,
         p2::ExogProc) where T
     @tullio out[i,j,k] = D[i,l,m] * p1.m[l,j] * p2.m[m,k]
 end
 
-function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p::ExogProc) where T
+@inline function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p::ExogProc) where T
     @tullio out[i,j,k,l] = D[i,j,k,m] * p.m[m,l]
 end
 
-function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p1::ExogProc,
+@inline function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p1::ExogProc,
         p2::ExogProc) where T
     @tullio out[i,j,k,l] = D[i,j,m,n] * p1.m[m,k] * p2.m[n,l]
 end
 
-function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p1::ExogProc,
+@inline function forward!(out::AbstractArray{T,4}, D::AbstractArray{T,4}, p1::ExogProc,
         p2::ExogProc, p3::ExogProc) where T
     @tullio out[i,j,k,l] = D[i,m,n,o] * p1.m[m,j] * p2.m[n,k] * p3.m[o,l]
 end
@@ -142,19 +142,14 @@ struct EndoProc{TF,N} <: DiscreteTimeLawOfMotion{TF}
 end
 
 """
-    assetproc(amin::Real, amax::Real, n::Int, dims::Int...; pivot::Real=0.25)
+    assetgrid(amin::Real, amax::Real, n::Int; pivot::Real=0.25)
 
-Construct an instance of [`EndoProc`](@ref) with a grid of `n` points
-between `amin` and `amax` that are equidistant in log.
-The size of the discretized state space need to be specified by `dims`
-for constructing arrays needed for forward iteration.
-
-Since the grid points may be nonpositive,
-a keyword argument `pivot` can be specified for shifting the grid to the positive part
-when computing the distances between adjacent grid points.
+Return a grid of `n` points between `amin` and `amax` that are equidistant in log.
 The implementation is similar to the method `agrid` in the Python package.
+See also [`assetproc`](@ref) that additionally supports
+transitions across state space.
 """
-function assetproc(amin::Real, amax::Real, n::Int, dims::Int...; pivot::Real=0.25)
+function assetgrid(amin::Real, amax::Real, n::Int; pivot::Real=0.25)
     pivot < 0 && throw(ArgumentError("pivot must be nonnegative"))
     aleft = amin + pivot
     if aleft < 0
@@ -164,6 +159,25 @@ function assetproc(amin::Real, amax::Real, n::Int, dims::Int...; pivot::Real=0.2
     agrid = [exp(a)-pivot for a in range(log(aleft), log(amax+pivot), n)]
     # Ensure the left endpoint is exactly amin
     agrid[1] = amin
+    return agrid
+end
+
+"""
+    assetproc(amin::Real, amax::Real, n::Int, dims::Int...; pivot::Real=0.25)
+
+Construct an instance of [`EndoProc`](@ref) with a grid of `n` points
+between `amin` and `amax` that are equidistant in log.
+The size of the discretized state space need to be specified by `dims`
+for constructing arrays needed for forward iteration.
+See also [`assetgrid`](@ref), which only returns the grid.
+
+Since the grid points may be nonpositive,
+a keyword argument `pivot` can be specified for shifting the grid to the positive part
+when computing the distances between adjacent grid points.
+The implementation is similar to the method `agrid` in the Python package.
+"""
+function assetproc(amin::Real, amax::Real, n::Int, dims::Int...; pivot::Real=0.25)
+    agrid = assetgrid(amin, amax, n; pivot=pivot)
     TF = eltype(agrid)
     N = length(dims)
     li = Array{Int,N}(undef, dims...)
@@ -188,8 +202,8 @@ function update!(p::EndoProc, i::Int, a::AbstractArray)
     vlis = splitdimsview(p.li, dims)
     vlps = splitdimsview(p.lp, dims)
     vas = splitdimsview(a, dims)
-    for (vli, vlp, va) in zip(vlis, vlps, vas)
-        interpolate_coord!(vli, vlp, va, p.g)
+    @inbounds for k in eachindex(vlis)
+        interpolate_coord!(vlis[k], vlps[k], vas[k], p.g)
     end
     return p
 end
@@ -212,8 +226,8 @@ function backward!(ev::AbstractArray, v::AbstractArray, p::EndoProc)
         vvs = splitdimsview(v, dims)
         vlis = splitdimsview(p.li, dims)
         vlps = splitdimsview(p.lp, dims)
-        for (vev, vv, vli, vlp) in zip(vevs, vvs, vlis, vlps)
-            backward_endo!(vev, vv, vli, vlp)
+        @inbounds for k in eachindex(vevs)
+            backward_endo!(vevs[k], vvs[k], vlis[k], vlps[k])
         end
     else
         backward_endo!(ev, v, p.li, p.lp)
@@ -233,8 +247,8 @@ function backward!(ev::AbstractArray, v::AbstractArray, p1::EndoProc, p2::EndoPr
         vlp1s = splitdimsview(p1.lp, dims)
         vli2s = splitdimsview(p2.li, dims)
         vlp2s = splitdimsview(p2.lp, dims)
-        for (vev, vv, vli1, vlp1, vli2, vlp2) in zip(vevs, vvs, vli1s, vlp1s, vli2s, vlp2s)
-            backward_endo!(vev, vv, vli1, vlp1, vli2, vlp2)
+        @inbounds for k in eachindex(vevs)
+            backward_endo!(vevs[k], vvs[k], vli1s[k], vlp1s[k], vli2s[k], vlp2s[k])
         end
     else
         backward_endo!(ev, v, p1.li, p1.lp, p2.li, p2.lp)
@@ -289,8 +303,8 @@ function forward!(out::AbstractArray, D::AbstractArray, p::EndoProc)
         vDs = splitdimsview(D, dims)
         vlis = splitdimsview(p.li, dims)
         vlps = splitdimsview(p.lp, dims)
-        for (vout, vD, vli, vlp) in zip(vouts, vDs, vlis, vlps)
-            forward_endo!(vout, vD, vli, vlp)
+        @inbounds for k in eachindex(vouts)
+            forward_endo!(vouts[k], vDs[k], vlis[k], vlps[k])
         end
     else
         forward_endo!(out, D, p.li, p.lp)
@@ -310,8 +324,8 @@ function forward!(out::AbstractArray, D::AbstractArray, p1::EndoProc, p2::EndoPr
         vlp1s = splitdimsview(p1.lp, dims)
         vli2s = splitdimsview(p2.li, dims)
         vlp2s = splitdimsview(p2.lp, dims)
-        for (vout, vD, vli1, vlp1, vli2, vlp2) in zip(vouts, vDs, vli1s, vlp1s, vli2s, vlp2s)
-            forward_endo!(vout, vD, vli1, vlp1, vli2, vlp2)
+        @inbounds for k in eachindex(vouts)
+            forward_endo!(vouts[k], vDs[k], vli1s[k], vlp1s[k], vli2s[k], vlp2s[k])
         end
     else
         forward_endo!(out, D, p1.li, p1.lp, p2.li, p2.lp)
@@ -364,8 +378,8 @@ function forward_shock!(out::AbstractArray, D::AbstractArray, p::EndoProc, da::A
         vDs = splitdimsview(D, dims)
         vlis = splitdimsview(p.li, dims)
         vdas = splitdimsview(da, dims)
-        for (vout, vD, vli, vda) in zip(vouts, vDs, vlis, vdas)
-            forward_shock_endo!(vout, vD, vli, vda, p.g)
+        @inbounds for k in eachindex(vouts)
+            forward_shock_endo!(vouts[k], vDs[k], vlis[k], vdas[k], p.g)
         end
     else
         forward_shock_endo!(out, D, p.li, da, p.g)
@@ -388,9 +402,9 @@ function forward_shock!(out::AbstractArray, D::AbstractArray,
         vli2s = splitdimsview(p2.li, dims)
         vlp2s = splitdimsview(p2.lp, dims)
         vda2s = splitdimsview(da2, dims)
-        for (vout, vD, vli1, vlp1, vda1, vli2, vlp2, vda2) in
-                zip(vouts, vDs, vli1s, vlp1s, vda1s, vli2s, vlp2s, vda2s)
-            forward_shock_endo!(vout, vD, vli1, vlp1, vda1, vli2, vlp2, vda2, p1.g, p2.g)
+        @inbounds for k in eachindex(vouts)
+            forward_shock_endo!(vouts[k], vDs[k], vli1s[k], vlp1s[k], vda1s[k],
+                vli2s[k], vlp2s[k], vda2s[k], p1.g, p2.g)
         end
     else
         forward_shock_endo!(out, D, p1.li, p1.lp, da1, p2.li, p2.lp, da2, p1.g, p2.g)

@@ -1,5 +1,3 @@
-const JacType{TF<:AbstractFloat} = Union{Matrix{TF},LinearMap{TF}}
-
 struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     parent::SequenceSpaceModel
     blks::Vector{AbstractBlock}
@@ -142,7 +140,7 @@ struct GEJacobian{TF<:AbstractFloat}
     unknowns::Vector{Symbol}
     H_U::Union{Matrix{TF}, Nothing}
     factor::Union{LU{TF, Matrix{TF}},Nothing}
-    Gs::Dict{Symbol,Dict{Symbol,JacType{TF}}}
+    Gs::Dict{Symbol,Dict{Symbol,Matrix{TF}}}
 end
 
 function GEJacobian(tjac::TotalJacobian{TF}, exovars;
@@ -168,10 +166,10 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars;
     ldiv!(H_U, H_Z)
     G_U = H_Z
     G_U .*= -one(eltype(G_U))
-    Gs = Dict{Symbol,Dict{Symbol,JacType{TF}}}()
+    Gs = Dict{Symbol,Dict{Symbol,Matrix{TF}}}()
     j0 = 0
     for z in exovars
-        Gs[z] = Dict{Symbol,JacType{TF}}()
+        Gs[z] = Dict{Symbol,Matrix{TF}}()
         Nz = length(tjac.varvals[z])
         i0 = 0
         for u in unknowns
@@ -186,30 +184,30 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars;
 end
 
 function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
-    z = get(gejac.Gs, exovar, nothing)
-    z === nothing && throw(ArgumentError("$exovar is not an exogenous variable"))
+    haskey(gejac.Gs, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
+    Gz = gejac.Gs[exovar]
     # G is readily available if endovar is a source
-    G = get(z, endovar, nothing)
-    G === nothing || return G
-    # endovar does not have to be a source
+    haskey(Gz, endovar) && return Gz[endovar]
+    # endovar does not have to be a source but must have been encountered by tjac
     endovar in gejac.tjac.vars ||
         throw(ArgumentError("$endovar is not an endogenous variable"))
     # M_U combines all indirect effects while M_u is for a specific channel
-    M_U = LinearMap(UniformScaling(zero(TF)), gejac.tjac.nT)
-    M_Z = M_U
-    for (u, ms) in gejac.tjac.totals
-        # Direct effect of exovar
-        if u === exovar
-            M = get(ms, endovar, nothing)
-            M === nothing || (M_Z = M)
-        # Indirect effect via other sources
-        else
-            M_u = get(ms, endovar, nothing)
-            M_u === nothing && continue
-            M_U += M_u * gejac.Gs[exovar][u]
+    M = LinearMap(UniformScaling(zero(TF)), gejac.tjac.nT)
+    for (src, ms) in gejac.tjac.totals
+        # Direct effect of exovar M_Z
+        if src === exovar
+            if haskey(ms, endovar)
+                M += ms[endovar]
+            end
+        # Indirect effect via unknowns M_U
+        elseif src in gejac.unknowns
+            if haskey(ms, endovar) 
+                M_u = ms[endovar]
+                M += M_u * Gz[src]
+            end
         end
     end
-    G = Matrix(M_U + M_Z)
-    gejac.Gs[exovar][endovar] = G
+    G = Matrix(M)
+    Gz[endovar] = G
     return G
 end

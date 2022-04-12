@@ -1,11 +1,10 @@
 """
     supconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
 
-Assess convergence by determining whether
-the largest absolute difference between corresponding elements in `A` and `B`
-is no greater than `tol`.
+Assess convergence by determining whether the largest absolute difference
+between corresponding elements in `A` and `B` is no greater than `tol`.
 """
-function supconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
+@inline function supconverged(A::AbstractArray, B::AbstractArray, tol::Real=1e-8)
     length(A) == length(B) || throw(ArgumentError("the two arrays must have the same length"))
     @inbounds for i in 1:length(A)
         abs(A[i]-B[i]) > tol && return false
@@ -83,9 +82,10 @@ and store the results in `yq`.
 The implementation mostly follows the corresponding method in the original Python package.
 See also [`interpolate_coord!`](@ref).
 """
-function interpolate_y!(yq::AbstractArray, xq::AbstractArray, y::AbstractVector, x::AbstractVector)
-    size(yq) == size(xq) || throw(ArgumentError("size of yq must match size of xq"))
-    size(y) == size(x) || throw(ArgumentError("size of y must match size of x"))
+@inline function interpolate_y!(yq::AbstractArray, xq::AbstractArray, y::AbstractVector,
+        x::AbstractVector)
+    size(yq) == size(xq) || throw(DimensionMismatch("size of yq must match size of xq"))
+    size(y) == size(x) || throw(DimensionMismatch("size of y must match size of x"))
     issorted(x) || (x = sort(x))
     isorted = issorted(xq) ? (1:length(xq)) : sortperm(xq)
     K = length(x)
@@ -108,9 +108,10 @@ for linear interpolation of `xq` on a grid `x` in `xqi` and `xqpi` respectively.
 The implementation mostly follows the corresponding method in the original Python package.
 See also [`interpolate_y!`](@ref).
 """
-function interpolate_coord!(xqi::AbstractArray, xqpi::AbstractArray, xq::AbstractVector, x::AbstractVector)
+@inline function interpolate_coord!(xqi::AbstractVector, xqpi::AbstractVector,
+        xq::AbstractVector, x::AbstractVector)
     length(xqi) == length(xqpi) == length(xq) ||
-        throw(ArgumentError("length of xqi, xqpi and xq must be the same"))
+        throw(DimensionMismatch("length of xqi, xqpi and xq must be the same"))
     issorted(x) || (x = sort(x))
     isorted = issorted(xq) ? (1:length(xq)) : sortperm(xq)
     K = length(x)
@@ -125,10 +126,32 @@ function interpolate_coord!(xqi::AbstractArray, xqpi::AbstractArray, xq::Abstrac
     return xqi, xqpi
 end
 
-function setmin!(a::AbstractArray, amin::Real)
+"""
+    apply_coord!(yq::AbstractArray, y::AbstractArray, li::AbstractArray, lp::AbstractArray)
+
+Set `yq` using indices `li` and weights `lp` of the lower end-points
+obtained from interpolataion of `y`.
+The implementation mostly follows the corresponding method in the original Python package.
+"""
+@inline function apply_coord!(yq::AbstractArray, y::AbstractArray, li::AbstractArray,
+        lp::AbstractArray)
+    size(yq) == size(li) == size(lp) ||
+        throw(DimensionMismatch("size of yq, li and lp must be the same"))
+    @inbounds @simd for i in eachindex(yq)
+        lpi, lii = lp[i], li[i]
+        yq[i] = lpi * y[lii] + (1-lpi) * y[lii+1]
+    end
+end
+
+"""
+    setmin!(a::AbstractArray, amin::Real)
+
+Replace any element in `a` that is smaller than `amin` with `amin`.
+"""
+@inline function setmin!(a::AbstractArray, amin::Real)
     amin = convert(eltype(a), amin)
-    @simd for i in eachindex(a)
-        @inbounds ai = a[i]
-        @inbounds a[i] = ifelse(ai<amin, amin, ai)
+    @inbounds @simd for i in eachindex(a)
+        ai = a[i]
+        a[i] = ifelse(ai<amin, amin, ai)
     end
 end

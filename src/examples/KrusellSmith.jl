@@ -2,9 +2,9 @@ module KrusellSmith
 
 using ..SequenceJacobians
 using ..SequenceJacobians.RBC: firm
-using ..SequenceJacobians.ExampleUtils
 
-import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies, backward_init!, backward_endo!
+import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies,
+    backward_init!, backward_endo!
 
 export kshhblock, ksblocks
 
@@ -51,8 +51,6 @@ valuevars(::KSHousehold) = (:Va,)
 policies(::KSHousehold) = (:a, :c)
 
 function backward_init!(h::KSHousehold, r, w, β, eis)
-    fill!(h.a, 0.0)
-    fill!(h.c, 0.0)
     h.coh .= (1 + r) .* grid(h.aproc) .+ w .* grid(h.eproc)'
     h.Va .= (1 + r) .* (0.1 .* h.coh).^(-1/eis)
 end
@@ -69,8 +67,6 @@ function backward_endo!(h::KSHousehold, EVa, r, w, β, eis)
     setmin!(h.a, agrid[1])
     h.c .= h.coh .- h.a
     h.Va .= (1 + r).*h.c.^(-1/eis)
-    # It does not matter which variable is returned
-    return h.Va
 end
 
 function kshhblock(amin, amax, Na, ρe, σe, Ne; kwargs...)

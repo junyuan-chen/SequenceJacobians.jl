@@ -5,16 +5,16 @@ struct SolvedBlock{B,J,ins,outs} <: AbstractBlock{ins,outs}
         new{typeof(blk),typeof(jac),inputs(blk),outputs(blk)}(blk, jac)
     SolvedBlock(blk::HetBlock, jac::HetAgentJacCache) =
         new{typeof(blk),typeof(jac),inputs(blk),outputs(blk)}(blk, jac)
-    SolvedBlock(blk::CombinedBlock{true}, jac::GEJacobian) =
+    SolvedBlock(blk::CombinedBlock, jac::GEJacobian) =
         new{typeof(blk),typeof(jac),inputs(blk),outputs(blk)}(blk, jac)
-    SolvedBlock(blk::CombinedBlock{false}, jac::TotalJacobian) =
+    SolvedBlock(blk::CombinedBlock{0}, jac::TotalJacobian) =
         new{typeof(blk),typeof(jac),inputs(blk),outputs(blk)}(blk, jac)
 end
 
 block(b::SimpleBlock, Js::Dict{Int,<:Matrix}) = SolvedBlock(b, Js)
 block(b::HetBlock, ca::HetAgentJacCache) = SolvedBlock(b, ca)
-block(b::CombinedBlock{true}, gejac::GEJacobian) = SolvedBlock(b, gejac)
-block(b::CombinedBlock{false}, tjac::TotalJacobian) = SolvedBlock(b, tjac)
+block(b::CombinedBlock, gejac::GEJacobian) = SolvedBlock(b, gejac)
+block(b::CombinedBlock{0}, tjac::TotalJacobian) = SolvedBlock(b, tjac)
 
 invars(b::SolvedBlock) = invars(b.blk)
 ssinputs(b::SolvedBlock) = ssinputs(b.blk)
