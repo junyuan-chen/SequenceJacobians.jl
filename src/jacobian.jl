@@ -134,12 +134,34 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
     return TotalJacobian(m, blks, vars, varvals, nT, sources, targets, ntarsrc, excluded, parts, totals)
 end
 
-struct GEJacobian{TF<:AbstractFloat}
+inlength(j::TotalJacobian) = length(j.srcs)
+tarlength(j::TotalJacobian) = length(j.tars)
+
+show(io::IO, ::TotalJacobian{TF}) where TF = print(io, "TotalJacobian{$TF}")
+
+function show(io::IO, ::MIME"text/plain", j::TotalJacobian{TF}) where TF
+    nblk = length(j.blks)
+    nvar = length(j.vars)
+    print(io, "TotalJacobian{$TF} with $nblk block")
+    nblk > 1 && print(io, 's')
+    print(io, ", $nvar variable")
+    nvar > 1 && print(io, 's')
+    print(io, " and ", j.nT, " period")
+    j.nT > 1 && print(io, 's')
+    println(io, ":")
+    print(io, "  sources: ")
+    join(io, sort([j.srcs...]), ", ")
+    print(io, "\n  targets: ")
+    join(io, j.tars, ", ")
+end
+
+struct GEJacobian{TF<:AbstractFloat, HU<:Union{Matrix{TF},Nothing},
+        FAC<:Union{<:Factorization,Nothing}}
     tjac::TotalJacobian{TF}
     exovars::Vector{Symbol}
     unknowns::Vector{Symbol}
-    H_U::Union{Matrix{TF}, Nothing}
-    factor::Union{LU{TF, Matrix{TF}},Nothing}
+    H_U::HU
+    factor::FAC
     Gs::Dict{Symbol,Dict{Symbol,Matrix{TF}}}
 end
 
@@ -181,6 +203,20 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars;
     end
     return GEJacobian(tjac, exovars, unknowns,
         keepH_U ? hu : nothing, keepfactor ? H_U : nothing, Gs)
+end
+
+show(io::IO, ::GEJacobian{TF}) where TF = print(io, "GEJacobian{$TF}")
+
+function show(io::IO, ::MIME"text/plain", j::GEJacobian{TF}) where TF
+    print(io, "GEJacobian{$TF} with ", j.tjac.nT, " period")
+    j.tjac.nT > 1 && print(io, 's')
+    println(io, ":")
+    print(io, "  exogenous:  ")
+    join(io, j.exovars, ", ")
+    print(io, "\n  endogenous: ")
+    join(io, j.unknowns, ", ")
+    print(io, "\n  targets:    ")
+    join(io, j.tjac.tars, ", ")
 end
 
 function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF

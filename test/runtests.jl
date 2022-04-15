@@ -9,6 +9,8 @@ using NLsolve
 using Roots: Brent, Secant
 using SequenceJacobians: jacbyinput
 
+import SequenceJacobians: backwardsolver, forwardsolver
+
 if VERSION >= v"1.7" && Sys.isapple()
     using OpenBLAS32_jll
 end

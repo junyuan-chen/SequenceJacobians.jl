@@ -5,7 +5,7 @@ using ..SequenceJacobians.ExampleUtils
 using LinearAlgebra: mul!
 using SplitApplyCombine: splitdimsview
 
-import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies,
+import SequenceJacobians: endoprocs, exogprocs, valuevars, expectedvalues, policies,
     backwardtargets, backward_init!, backward_endo!
 
 export twoassethhblock, twoassetmodelss, twoassetmodel
@@ -16,15 +16,20 @@ struct TwoAssetHousehold{TF<:AbstractFloat} <: AbstractHetAgent
     eproc::ExogProc{TF}
     κgrid::Vector{TF}
     zgrid::Vector{TF}
-    li0::Array{Int,3}
-    lp0::Array{TF,3}
+    li0a::Array{Int,3}
+    lp0a::Array{TF,3}
     a_endo_unc::Array{TF,3}
     c_endo_unc::Array{TF,3}
     b_endo::Array{TF,3}
+    li0b::Array{Int,3}
+    lp0b::Array{TF,3}
     a::Array{TF,3}
     alast::Array{TF,3}
     b::Array{TF,3}
     blast::Array{TF,3}
+    icons::Array{Bool,3}
+    icons0::Vector{Int}
+    icons1::Vector{Int}
     lhs_con::Array{TF,3}
     li1::Array{Int,3}
     lp1::Array{TF,3}
@@ -59,15 +64,21 @@ function TwoAssetHousehold(amax, bmax, κmax, Na, Nb, Ne, Nκ, ρe, σe)
     eproc = rouwenhorstexp(ρe, σe, Ne)
     κgrid = reverse!(assetgrid(0, κmax, Nκ))
     zgrid = similar(grid(eproc))
-    li0 = Array{Int,3}(undef, dims0)
-    lp0 = Array{Float64,3}(undef, dims0)
-    a_endo_unc = similar(lp0)
-    c_endo_unc = similar(lp0)
-    b_endo = similar(lp0)
-    a = similar(lp0)
-    alast = similar(lp0)
-    b = similar(lp0)
-    blast = similar(lp0)
+    li0a = Array{Int,3}(undef, dims0)
+    lp0a = Array{Float64,3}(undef, dims0)
+    a_endo_unc = similar(lp0a)
+    c_endo_unc = similar(lp0a)
+    b_endo = similar(lp0a)
+    li0b = similar(li0a)
+    lp0b = similar(lp0a)
+    a = similar(lp0a)
+    alast = similar(a)
+    b = similar(a)
+    blast = similar(a)
+    icons = Array{Bool,3}(undef, dims0)
+    fill!(icons, false)
+    icons0 = ones(Int, Ne)
+    icons1 = similar(icons0)
     lhs_con = Array{Float64,3}(undef, dims1)
     li1 = Array{Int,3}(undef, dims1)
     lp1 = Array{Float64,3}(undef, dims1)
@@ -75,35 +86,36 @@ function TwoAssetHousehold(amax, bmax, κmax, Na, Nb, Ne, Nκ, ρe, σe)
     c_endo_con = similar(lp1)
     a_con = similar(lp1)
     Ψ1grid = Matrix{Float64}(undef, Na, Na)
-    achange = similar(lp0)
-    corefactor = similar(lp0)
-    Ψ = similar(lp0)
-    Ψ1 = similar(lp0)
-    Ψ2 = similar(lp0)
-    c = similar(lp0)
-    uc = similar(lp0)
-    uce = similar(lp0)
-    Va = similar(lp0)
-    Vb = similar(lp0)
-    EVa = similar(lp0)
-    EVb = similar(lp0)
-    Wb = similar(lp0)
-    Wratio = similar(lp0)
-    D = similar(lp0)
-    Dendo = similar(lp0)
-    Dlast = similar(lp0)
-    return TwoAssetHousehold{eltype(c)}(aproc, bproc, eproc, κgrid, zgrid, li0, lp0,
-        a_endo_unc, c_endo_unc, b_endo, a, alast, b, blast, lhs_con, li1, lp1,
+    achange = similar(a)
+    corefactor = similar(a)
+    Ψ = similar(a)
+    Ψ1 = similar(a)
+    Ψ2 = similar(a)
+    c = similar(a)
+    uc = similar(a)
+    uce = similar(a)
+    Va = similar(a)
+    Vb = similar(a)
+    EVa = similar(a)
+    EVb = similar(a)
+    Wb = similar(a)
+    Wratio = similar(a)
+    D = similar(a)
+    Dendo = similar(a)
+    Dlast = similar(a)
+    return TwoAssetHousehold{eltype(c)}(aproc, bproc, eproc, κgrid, zgrid,
+        li0a, lp0a, a_endo_unc, c_endo_unc, b_endo, li0b, lp0b,
+        a, alast, b, blast, icons, icons0, icons1, lhs_con, li1, lp1,
         a_endo_con, c_endo_con, a_con, Ψ1grid, achange, corefactor,
         Ψ, Ψ1, Ψ2, c, uc, uce, Va, Vb, EVa, EVb, Wb, Wratio, D, Dendo, Dlast)
 end
 
-endostates(::TwoAssetHousehold) = (:aproc, :bproc)
-endopolicies(::TwoAssetHousehold) = (aproc=:a, bproc=:b)
-exogstates(::TwoAssetHousehold) = (:eproc,)
-valuevars(::TwoAssetHousehold) = (:Va, :Vb)
-policies(::TwoAssetHousehold) = (:a, :b, :c, :uce, :Ψ)
-backwardtargets(::TwoAssetHousehold) = (:a, :b)
+endoprocs(h::TwoAssetHousehold) = (h.aproc, h.bproc)
+exogprocs(h::TwoAssetHousehold) = (h.eproc,)
+valuevars(h::TwoAssetHousehold) = (h.Va, h.Vb)
+expectedvalues(h::TwoAssetHousehold) = (h.EVa, h.EVb)
+policies(h::TwoAssetHousehold) = (h.a, h.b, h.c, h.uce, h.Ψ)
+backwardtargets(h::TwoAssetHousehold) = (h.a=>h.alast, h.b=>h.blast)
 
 function backward_init!(h::TwoAssetHousehold, zeratio, β, eis, rb, ra, χ0, χ1, χ2)
     agrid = grid(h.aproc)
@@ -139,122 +151,165 @@ end
     end
 end
 
-@inline function setmin2!(a, a_con, b, bmin)
-    @inbounds for i in eachindex(b)
-        bi = b[i]
-        if bi < bmin
-            b[i] = bmin
-            a[i] = a_con[i]
-        end
-    end
-end
-
-@inline function updateΨ!(h::TwoAssetHousehold, ra, χ0, χ1, χ2)
-    agrid = grid(h.aproc)
-    Na, Nb, Ne = size(h.a)
+@inline function findcons!(icons, icons0, icons1, b, bmin, li0a)
+    Na, Nb, Ne = size(b)
     @inbounds for k in 1:Ne
         for j in 1:Nb
-            @simd for i in 1:Na
-                Ψ, _, Ψ2 = getΨ(h.a[i,j,k], agrid[i], ra, χ0, χ1, χ2)
-                h.Ψ[i,j,k] = Ψ
-                h.Ψ2[i,j,k] = Ψ2
+            for i in 1:Na
+                bi = b[i,j,k]
+                if bi < bmin
+                    b[i,j,k] = bmin
+                    # Indicate whether b is constrained
+                    icons[i,j,k] = true
+                    # Update the upper bound for indices with constrained b
+                    icons0[k] = i
+                else
+                    icons[i,j,k] = false
+                end
             end
         end
+        i0 = icons0[k]
+        # Obtain the bound for the grid in the next period
+        i1 = li0a[i0,1,k]
+        i1 < Na && (i1 += 1)
+        icons1[k] = i1
     end
 end
 
-@inline function setlhs_con!(h::TwoAssetHousehold)
-    Na, Nκ, Ne = size(h.lhs_con)
+function setacon!(a, a_con, icons)
+    Na, Nb, Ne = size(a)
     @inbounds for k in 1:Ne
-        for j in 1:Nκ
-            κ = h.κgrid[j]
-            @simd for i in 1:Na
-                h.lhs_con[i,j,k] = h.Wratio[i,1,k] / (1 + κ)
+        for j in 1:Nb
+            for i in 1:Na
+                if icons[i,j,k]
+                    a[i,j,k] = a_con[i,j,k]
+                end
             end
         end
     end
 end
 
+# Algorithm based on Auclert, Bardóczy, Rognlie and Straub (2021)
 function backward_endo!(h::TwoAssetHousehold, EVa, EVb, zeratio, β, eis, rb, ra, χ0, χ1, χ2)
     h.zgrid .= zeratio .* grid(h.eproc)
+    Na = length(grid(h.aproc))
     Nb = length(grid(h.bproc))
     Ne = length(grid(h.eproc))
     Nκ = length(h.κgrid)
     agrid = grid(h.aproc)
     bgrid = grid(h.bproc)
-    bgrid2 = reshape(bgrid, 1, Nb)
-    zgrid3 = reshape(h.zgrid, 1, 1, Ne)
-    egrid3 = reshape(grid(h.eproc), 1, 1, Ne)
+    egrid = grid(h.eproc)
+    bmin = bgrid[1]
 
     h.Wb .= β .* EVb
-    h.Wratio .= β .* EVa ./ h.Wb
+    h.Wratio .= EVa ./ EVb
 
+    # First find the policy without imposing the constraint on b
     marginal_cost_grid!(h, ra, χ0, χ1, χ2)
-    vli0s23 = splitdimsview(h.li0, (2,3))
-    vlp0s23 = splitdimsview(h.lp0, (2,3))
+    vli0as = splitdimsview(h.li0a, (2,3))
+    vlp0as = splitdimsview(h.lp0a, (2,3))
     vWratios = splitdimsview(h.Wratio, (2,3))
-    va_endo_uncs23 = splitdimsview(h.a_endo_unc, (2,3))
-    vc_endo_uncs = splitdimsview(h.c_endo_unc, (2,3))
-    vWbs = splitdimsview(h.Wb, (2,3))
-    @inbounds for k in eachindex(vli0s23)
-        lhs_equals_rhs_interpolate!(vli0s23[k], vlp0s23[k], vWratios[k], h.Ψ1grid)
-        apply_coord!(va_endo_uncs23[k], agrid, vli0s23[k], vlp0s23[k])
-        apply_coord!(vc_endo_uncs[k], vWbs[k], vli0s23[k], vlp0s23[k])
-    end
-
-    h.c_endo_unc .= h.c_endo_unc.^(-eis)
-    h.b_endo .= (h.c_endo_unc .+ h.a_endo_unc .- (1.0.+ra).*agrid .+ bgrid2 .- zgrid3 .+
-        getindex.(getΨ.(h.a_endo_unc, agrid, ra, χ0, χ1, χ2), 1)) ./ (1.0.+rb)
-
-    vli0s13 = splitdimsview(h.li0, (1,3))
-    vlp0s13 = splitdimsview(h.lp0, (1,3))
+    vli0bs = splitdimsview(h.li0b, (1,3))
+    vlp0bs = splitdimsview(h.lp0b, (1,3))
     vb_endos = splitdimsview(h.b_endo, (1,3))
-    va_uncs = splitdimsview(h.a, (1,3))
-    va_endo_uncs13 = splitdimsview(h.a_endo_unc, (1,3))
-    vb_uncs = splitdimsview(h.b, (1,3))
-    @inbounds for k in eachindex(vli0s13)
-        interpolate_coord!(vli0s13[k], vlp0s13[k], bgrid, vb_endos[k])
-        apply_coord!(va_uncs[k], va_endo_uncs13[k], vli0s13[k], vlp0s13[k])
-        apply_coord!(vb_uncs[k], bgrid, vli0s13[k], vlp0s13[k])
-    end
-
-    setlhs_con!(h)
-
-    vli1s23 = splitdimsview(h.li1, (2,3))
-    vlp1s23 = splitdimsview(h.lp1, (2,3))
-    vlhs_cons = splitdimsview(h.lhs_con, (2,3))
-    va_endo_cons = splitdimsview(h.a_endo_con, (2,3))
-    vc_endo_cons = splitdimsview(h.c_endo_con, (2,3))
-    for k in eachindex(vli1s23)
-        lhs_equals_rhs_interpolate!(vli1s23[k], vlp1s23[k], vlhs_cons[k], h.Ψ1grid)
-        apply_coord!(va_endo_cons[k], agrid, vli1s23[k], vlp1s23[k])
-    end
-    for k in 1:Ne
-        vWb = view(h.Wb,:,1,k)
-        for j in 1:Nκ
-            apply_coord!(vc_endo_cons[j,k], vWb, vli1s23[j,k], vlp1s23[j,k])
+    @inbounds Threads.@threads for k in 1:Ne
+        zk = h.zgrid[k]
+        # Find a', b and c on the (a, b', e) grid
+        for j in 1:Nb
+            lhs_equals_rhs_interpolate!(vli0as[j,k], vlp0as[j,k], vWratios[j,k], h.Ψ1grid)
+            for i in 1:Na
+                li0a, lp0a = h.li0a[i,j,k], h.lp0a[i,j,k]
+                a_endo_unc = lp0a * agrid[li0a] + (1-lp0a) * agrid[li0a+1]
+                h.a_endo_unc[i,j,k] = a_endo_unc
+                c_endo_unc = (lp0a * h.Wb[li0a,j,k] + (1-lp0a) * h.Wb[li0a+1,j,k])^(-eis)
+                h.c_endo_unc[i,j,k] = c_endo_unc
+                h.b_endo[i,j,k] = (c_endo_unc + a_endo_unc - (1+ra)*agrid[i] + bgrid[j] -
+                    zk + getΨ(a_endo_unc, agrid[i], ra, χ0, χ1, χ2)[1]) / (1+rb)
+            end
+        end
+        # Find a' and b' on the (a, b, e) grid
+        for i in 1:Na
+            interpolate_coord!(vli0bs[i,k], vlp0bs[i,k], bgrid, vb_endos[i,k])
+        end
+        for (i, j) in Base.product(1:Na, 1:Nb)
+            li0b, lp0b = h.li0b[i,j,k], h.lp0b[i,j,k]
+            h.a[i,j,k] = lp0b * h.a_endo_unc[i,li0b,k] + (1-lp0b) * h.a_endo_unc[i,li0b+1,k]
+            h.b[i,j,k] = lp0b * bgrid[li0b] + (1-lp0b) * bgrid[li0b+1]
         end
     end
-    h.c_endo_con .= ((1.0.+h.κgrid').*h.c_endo_con).^(-eis)  
 
-    h.b_endo .= (h.c_endo_con .+ h.a_endo_con .- (1.0.+ra).*agrid .+ bgrid[1] .-
-        zgrid3 .+ getindex.(getΨ.(h.a_endo_con, agrid, ra, χ0, χ1, χ2), 1)) ./ (1.0.+rb)
+    # Find the subset of the state space where b is constrained
+    findcons!(h.icons, h.icons0, h.icons1, h.b, bmin, h.li0a)
 
+    # Resolve the problems imposing b is binding with different κ
+    vli1s = splitdimsview(h.li1, (2,3))
+    vlp1s = splitdimsview(h.lp1, (2,3))
+    vlhs_cons = splitdimsview(h.lhs_con, (2,3))
     va_cons = splitdimsview(h.a_con, (1,3))
     va_endo_con13s = splitdimsview(h.a_endo_con, (1,3))
     vb_endos = splitdimsview(h.b_endo, (1,3))
-    @inbounds for k in eachindex(va_cons)
-        interpolate_y!(va_cons[k], bgrid, va_endo_con13s[k], vb_endos[k])
+    @inbounds Threads.@threads for k in 1:Ne
+        iamax0 = h.icons0[k]
+        iamax1 = h.icons1[k]
+        for j in 1:Nκ
+            κ = h.κgrid[j]
+            for i in 1:iamax1
+                h.lhs_con[i,j,k] = h.Wratio[i,1,k] / (1 + κ)
+            end
+            lhs_equals_rhs_interpolate!(vli1s[j,k], vlp1s[j,k], vlhs_cons[j,k], h.Ψ1grid, iamax1, iamax0)
+        end
+
+        # Find a' and c on the subset of (a, κ, e) grid where b is binding
+        for j in 1:Nκ
+            κj = h.κgrid[j]
+            for i in 1:iamax0
+                li1, lp1 = h.li1[i,j,k], h.lp1[i,j,k]
+                h.a_endo_con[i,j,k] = lp1*agrid[li1]+(1-lp1)*agrid[li1+1]
+                Wb1 = (lp1* h.Wb[li1,1,k] + (1-lp1) * h.Wb[li1+1,1,k])
+                h.c_endo_con[i,j,k] = (Wb1*(1+κj))^(-eis)
+            end
+        end
+
+        # Get b on the (a, κ, e) grid by imposing b'=0
+        zk = h.zgrid[k]
+        for j in 1:Nκ
+            for i in 1:iamax0
+                ap = h.a_endo_con[i,j,k]
+                ai = agrid[i]
+                h.b_endo[i,j,k] = (h.c_endo_con[i,j,k] + ap - (1+ra)*ai + bmin - zk +
+                    getΨ(ap, ai, ra, χ0, χ1, χ2)[1]) / (1+rb)
+            end
+        end
+
+        # Find a' on the (a, b, e) grid for the constrained cases
+        for i in 1:iamax0
+            interpolate_y!(va_cons[i,k], bgrid, va_endo_con13s[i,k], vb_endos[i,k])
+        end
     end
 
-    setmin2!(h.a, h.a_con, h.b, bgrid[1])
-    updateΨ!(h, ra, χ0, χ1, χ2)
-    h.c .= (1.0.+ra).*agrid .+ (1.0.+rb).*bgrid2 .+ zgrid3 .- h.Ψ .- h.a .- h.b
-    h.uc .= h.c.^(-1/eis)
-    h.uce .= egrid3 .* h.uc
+    # Combine results for the constrained and unconstrained cases
+    setacon!(h.a, h.a_con, h.icons)
 
-    h.Va .= (1.0 .+ ra .- h.Ψ2) .* h.uc
-    h.Vb .= (1.0 .+ rb) .* h.uc
+    @inbounds Threads.@threads for k in 1:Ne
+        zk = h.zgrid[k]
+        ek = egrid[k]
+        for j in 1:Nb
+            for i in 1:Na
+                Ψ, _, Ψ2 = getΨ(h.a[i,j,k], agrid[i], ra, χ0, χ1, χ2)
+                h.Ψ[i,j,k] = Ψ
+                h.Ψ2[i,j,k] = Ψ2
+
+                c = (1+ra)*agrid[i] + (1+rb)*bgrid[j] + zk - Ψ - h.a[i,j,k] - h.b[i,j,k]
+                h.c[i,j,k] = c
+                uc = c^(-1/eis)
+                h.uc[i,j,k] = uc
+                h.uce[i,j,k] = ek * uc
+
+                h.Va[i,j,k] = (1 + ra - Ψ2) * uc
+                h.Vb[i,j,k] = (1 + rb) * uc
+            end
+        end
+    end
 end
 
 function twoassethhblock(amax, bmax, κmax, Na, Nb, Ne, Nκ, ρe, σe; kwargs...)

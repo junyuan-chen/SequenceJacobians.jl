@@ -1,7 +1,6 @@
 using SequenceJacobians.RBC
 function rbcss()
-    bfirm, bhh, bmkt, bss = rbcblocks()
-    m = model([bfirm, bhh, bmkt])
+    m = model(rbcblocks())
     calis = [:L=>1, :r=>0.01, :eis=>1, :frisch=>1, :δ=>0.025, :α=>0.11]
     tars = [:goods_mkt=>0, :r=>0.01, :euler=>0, :Y=>1]
     inits = [:φ=>0.9, :β=>0.99, :K=>2, :Z=>1]

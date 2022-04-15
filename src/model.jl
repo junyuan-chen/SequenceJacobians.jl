@@ -359,6 +359,7 @@ end
 function solve!(ST::Type, ss::SteadyState; keepinits::Bool=false, kwargs...)
     f!(y,x) = residuals!(y, ss, x)
     r = solve!(ST, f!, ss.inits; kwargs...)
+    # Results returned by the solver may be the guess for the next iteration
     keepinits || copyto!(ss.inits, r[1])
     return getvarvals(ss)
 end
@@ -388,4 +389,22 @@ function solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
         ss.varvals[] = varvals
         return varvals
     end
+end
+
+show(io::IO, ss::SteadyState{TF}) where TF =
+    print(io, inlength(ss), '×', tarlength(ss), " SteadyState{$TF}")
+
+function show(io::IO, ::MIME"text/plain", ss::SteadyState{TF}) where TF
+    print(io, inlength(ss), '×', tarlength(ss))
+    nblk = length(ss.blks)
+    nvar = length(ss.vars)
+    print(io, " SteadyState{$TF} with $nblk block")
+    nblk > 1 && print(io, 's')
+    print(io, " and $nvar variable")
+    nvar > 1 && print(io, 's')
+    println(io, ":")
+    print(io, "  unknowns: ")
+    join(io, inputs(ss), ", ")
+    print(io, "\n  targets:  ")
+    join(io, targets(ss), ", ")
 end

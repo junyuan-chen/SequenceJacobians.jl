@@ -134,10 +134,10 @@ obtained from interpolataion of `y`.
 The implementation mostly follows the corresponding method in the original Python package.
 """
 @inline function apply_coord!(yq::AbstractArray, y::AbstractArray, li::AbstractArray,
-        lp::AbstractArray)
+        lp::AbstractArray, imax=length(yq))
     size(yq) == size(li) == size(lp) ||
         throw(DimensionMismatch("size of yq, li and lp must be the same"))
-    @inbounds @simd for i in eachindex(yq)
+    @inbounds @simd for i in 1:imax
         lpi, lii = lp[i], li[i]
         yq[i] = lpi * y[lii] + (1-lpi) * y[lii+1]
     end

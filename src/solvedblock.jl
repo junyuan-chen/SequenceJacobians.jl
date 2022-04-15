@@ -44,3 +44,10 @@ end
 
 getjacmap(b::SolvedBlock, J, i::Int, ii::Int, r::Int, rr::Int, nT::Int) =
     getjacmap(b.blk, J, i, ii, r, rr, nT)
+
+show(io::IO, b::SolvedBlock) = print(io, "SolvedBlock($(b.blk))")
+
+function show(io::IO, ::MIME"text/plain", b::SolvedBlock)
+    println(io, "SolvedBlock($(b.blk)):")
+    _showinouts(io, b)
+end

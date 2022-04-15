@@ -106,7 +106,9 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
     end
 
     @testset "SteadyState Jacobian" begin
+        backwardsolver(::ta.TwoAssetHousehold) = NLsolve_anderson
         mss = ta.twoassetmodelss()
+        mss.pool[1].ssargs[:backaastart] = 100
         calis = Dict{Symbol,Float64}(:Y=>1, :N=>1, :K=>10, :r=>0.0125, :rstar=>0.0125,
         :tot_wealth=>14, :δ=>0.02, :pip=>0, :κp=>0.1, :muw=>1.1, :Bh=>1.04, :Bg=>2.8, :G=>0.2,
         :eis=>0.5, :frisch=>1, :χ0=>0.25, :χ2=>2, :εI=>4, :ω=>0.005, :κw=>0.1, :φ=>1.5)
@@ -115,16 +117,20 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         ss = SteadyState(mss, calis, inits, tars)
         @time solve!(GSL_Hybrids, ss, xtol=1e-10)
         # Compare results with original Python package
-        @test getval(ss, :A) ≈ 12.96 atol=1e-8
-        @test getval(ss, :B) ≈ 1.04 atol=1e-8
-        @test getval(ss, :C) ≈ 0.5820937276337765 atol=1e-8
+        @test getval(ss, :A) ≈ 12.96 atol=1e-5
+        @test getval(ss, :B) ≈ 1.04 atol=1e-6
+        @test getval(ss, :C) ≈ 0.5820937276337765 atol=1e-7
         @test getval(ss, :UCE) ≈ 4.434878914013179 atol=1e-6
-        @test getval(ss, :CHI) ≈ 0.012706305302404835 atol=1e-9
+        @test getval(ss, :CHI) ≈ 0.012706305302404835 atol=1e-8
 
         m = ta.twoassetmodel()
+        # Directly move the household block
         m.pool[1] = mss.pool[1]
         foreach(i->steadystate!(m.pool[i], tassvals), 3:5)
-        J = TotalJacobian(m, [:rstar,:Z,:G,:r,:w,:Y], [:asset_mkt,:fisher,:wnkpc],
+
+        # Compute Jacobians with default epsilon from FiniteDiff.jl
+        # The default epsilon is much smaller than the one set by the Python package
+        @time J = TotalJacobian(m, [:rstar,:Z,:G,:r,:w,:Y], [:asset_mkt,:fisher,:wnkpc],
             tassvals, 300)
         GJ = GEJacobian(J, (:rstar,:Z,:G), keepH_U=true)
         # dasset_mkt/dw
@@ -158,6 +164,23 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         Gyr = getG!(GJ, :rstar, :Y)
         @test Gyr[1,1:3] ≈ [-1.12544615, -9.42169946e-1, -6.81522845e-1] atol=1e-3
         @test Gyr[300,298:300] ≈ [-3.17242939e-2, -4.88707368e-2, 0] atol=1e-2
+        Gwg = getG!(GJ, :G, :w)
+        @test Gwg[1,1:3] ≈ [1.42252020e-1, 3.48736221e-2, -3.10755825e-2] atol=1e-3
+        @test Gwg[300,298:300] ≈ [1.87887110e-1, 3.06551227e-1, 4.89042824e-1] atol=1e-3
+        Grz = getG!(GJ, :Z, :r)
+        @test Grz[1,1:3] ≈ [3.28290545e-1, 2.89395288e-1, 2.21653282e-1] atol=1e-3
+        @test Grz[300,298:300] ≈ [-5.79345415e-2, -4.79892126e-1, -2.01655494e-1] atol=1e-3
+
+        # Recompute the Jacobians with the same epsilon used by the Python package
+        m.pool[1].diffargs[] = (twosided=true, epsilon=1e-4)
+        J = TotalJacobian(m, [:rstar,:Z,:G,:r,:w,:Y], [:asset_mkt,:fisher,:wnkpc],
+            tassvals, 300)
+        @test m.pool[1].jacargs[:jacca].epsilon == 1e-4
+        GJ = GEJacobian(J, (:rstar,:Z,:G), keepH_U=true)
+
+        Gyr = getG!(GJ, :rstar, :Y)
+        @test Gyr[1,1:3] ≈ [-1.12544615, -9.42169946e-1, -6.81522845e-1] atol=1e-3
+        @test Gyr[300,298:300] ≈ [-3.17242939e-2, -4.88707368e-2, 0] atol=1e-3
         Gwg = getG!(GJ, :G, :w)
         @test Gwg[1,1:3] ≈ [1.42252020e-1, 3.48736221e-2, -3.10755825e-2] atol=1e-3
         @test Gwg[300,298:300] ≈ [1.87887110e-1, 3.06551227e-1, 4.89042824e-1] atol=1e-3

@@ -8,171 +8,77 @@ HetAgentStyle(ha::AbstractHetAgent) = HetAgentStyle(typeof(ha))
 HetAgentStyle(::Type{<:AbstractHetAgent}) = TimeDiscrete()
 
 """
-    endostates(ha::AbstractHetAgent)
+    endoprocs(ha::AbstractHetAgent)
 
-Return an iterable object that contains all names used for
-identifying each endogenous law of motion of `ha`.
-Each element of the returned object must be accepted by [`getendo`](@ref).
+Return an iterable object that contains all the endogenous law of motion of `ha`.
+This method is required.
 """
-function endostates end
-
-"""
-    getendo(ha::AbstractHetAgent, n::Symbol)
-
-Return the object that holds the endogenous law of motion `n` from `ha`.
-The fallback method assumes that `n` is a property of `ha`
-and returns this property.
-"""
-getendo(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
-
-@inline function endoprocs(ha::AbstractHetAgent)
-    endos = endostates(ha)
-    return ntuple(i->@inbounds(getendo(ha, endos[i])), length(endos))
-end
+function endoprocs end
 
 """
-    endopolicies(ha::AbstractHetAgent)
+    exogprocs(ha::AbstractHetAgent)
 
-Return an object that maps each endogenous state to the corresponding policy.
-The policy can be retrieved by `getproperty(ha, n)` with `n` being the name of the state.
+Return an iterable object that contains all the exogenous law of motion of `ha`.
+This method is required.
 """
-function endopolicies end
-
-"""
-    exogstates(ha::AbstractHetAgent)
-
-Return an iterable object that contains all names used for
-identifying each exogenous law of motion of `ha`.
-Each element of the returned object must be accepted by [`getexog`](@ref).
-"""
-function exogstates end
-
-"""
-    getexog(ha::AbstractHetAgent, n::Symbol)
-
-Return the object that holds the exogenous law of motion `n` from `ha`.
-The fallback method assumes that `n` is a property of `ha`
-and returns this property.
-"""
-getexog(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
-
-@inline function exogprocs(ha::AbstractHetAgent)
-    exogs = exogstates(ha)
-    return ntuple(i->@inbounds(getexog(ha, exogs[i])), length(exogs))
-end
-
-"""
-    statevars(ha::AbstractHetAgent)
-
-Return an iterable object that contains all names used for
-identifying each state variable of `ha`.
-The order is consistent with the axes of the grids.
-This method is based on [`endostates`](@ref) and [`exogstates`](@ref).
-"""
-statevars(ha::AbstractHetAgent) = (endostates(ha)..., exogstates(ha)...)
+function exogprocs end
 
 """
     valuevars(ha::AbstractHetAgent)
 
-Return an iterable object that contains all names used for
-identifying the value function or its partial derivatives
-involved in the backward iteration of `ha`.
-Each element of the returned object must be accepted by
-[`getvalue`](@ref) and [`getexpectedvalue`](@ref).
+Return an iterable object that contains all the value functions
+or their partial derivatives involved in the backward iteration of `ha`.
+This method is required.
 """
 function valuevars end
 
 """
-    getvalue(ha::AbstractHetAgent, n::Symbol)
+    expectedvalues(ha::AbstractHetAgent)
 
-Return the object that holds the value `n` associated with
-the current step of backward iteration from `ha`.
-The fallback method assumes that `n` is a property of `ha`
-and returns this property.
-See also [`getexpectedvalue`](@ref).
+Return an iterable object that contains all the expectation of value functions
+or their partial derivatives involved in the backward iteration of `ha`.
+This method is required.
 """
-getvalue(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
-
-@inline function getvalues(ha::AbstractHetAgent)
-    vars = valuevars(ha)
-    return ntuple(i->@inbounds(getvalue(ha, vars[i])), length(vars))
-end
-
-"""
-    getexpectedvalue(ha::AbstractHetAgent, n::Symbol)
-
-Return the object that holds the value `n` associated with
-the previous step of backward iteration from `ha`.
-The fallback method assumes that `Symbol(:E, n)` is a property of `ha`
-and returns this property.
-See also [`getvalue`](@ref).
-"""
-getexpectedvalue(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, Symbol(:E, n))
-
-@inline function expectedvalues(ha::AbstractHetAgent)
-    vars = valuevars(ha)
-    return ntuple(i->@inbounds(getexpectedvalue(ha, vars[i])), length(vars))
-end
+function expectedvalues end
 
 """
     policies(ha::AbstractHetAgent)
 
-Return an iterable object that contains all names used for
-identifying each policy of `ha`.
-The returned object must contain names of the policies
-associated with the endogenous states
+Return an iterable object that contains all the policy functions of `ha`.
+The returned object must contain the policies associated with the endogenous states
 and places them in the beginning in the same order as
-how the states are indexed by the object returned by [`endostates`](@ref).
-Each element of the returned object must be accepted by [`getpolicy`](@ref).
+how the states are indexed by the object returned by [`endoprocs`](@ref).
+This method is required.
 """
 function policies end
 
 """
-    getpolicy(ha::AbstractHetAgent, n::Symbol)
+    endopolicies(ha::AbstractHetAgent)
 
-Return the object that holds the policy `n` associated with
-the current step of backward iteration from `ha`.
-The fallback method assumes that `n` is a property of `ha`
-and returns this property.
+Return an iterable object that contains the policies corresponding to
+all the endogenous law of motion of `ha`.
+The order of the elements must match the objects returned by [`endoprocs`](@ref).
+The fallback method assumes that the policies are placed in the beginning of
+the object returned by [`policies`](@ref) in the correct order.
 """
-getpolicy(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
-
-@inline function getpolicies(ha::AbstractHetAgent)
+function endopolicies(ha::AbstractHetAgent)
+    endos = endoprocs(ha)
     pols = policies(ha)
-    return ntuple(i->@inbounds(getpolicy(ha, pols[i])), length(pols))
+    return ntuple(i->pols[i], length(endos))
 end
 
 """
     backwardtargets(ha::AbstractHetAgent)
 
-Return an iterable object that contains all names used for identifying variables
+Return an iterable object that contains all the pairs of variables
 that are used for determining the convergence of backward iteration from `ha`.
-Each element of the returned object must be accepted by [`getbackwardtarget`](@ref).
-The fallback method passes `ha` to [`policies`](@ref).
+Each element of the returned object must be a `Pair` containing two objects
+involved in each comparison with the first one being an object
+evaluated from the current step of backward iteration
+and the second one being the one evaluated from the last step.
+This method is required.
 """
-backwardtargets(ha::AbstractHetAgent) = policies(ha)
-
-"""
-    getbackwardtarget(ha::AbstractHetAgent, n::Symbol)
-
-Return the object named `n` from `ha` that holds values obtained
-from the current step of backward iteration for determining the convergence.
-The fallback method assumes that `n` is a property of `ha`
-and returns this property.
-See also [`getlastbackwardtarget`](@ref).
-"""
-getbackwardtarget(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, n)
-
-"""
-    getlastbackwardtarget(ha::AbstractHetAgent, n::Symbol)
-
-Return the object named `n` from `ha` that holds values obtained
-from the last step of backward iteration for determining the convergence.
-The fallback method assumes that `Symbol(n, :last)` is a property of `ha`
-and returns this property.
-See also [`getbackwardtarget`](@ref).
-"""
-getlastbackwardtarget(ha::AbstractHetAgent, n::Symbol) = getproperty(ha, Symbol(n, :last))
+function backwardtargets end
 
 """
     getdist(ha::AbstractHetAgent)
@@ -208,16 +114,25 @@ See also [`getdist`](@ref) and [`getlastdist`](@ref).
 getdistendo(ha::AbstractHetAgent) = getproperty(ha, :Dendo)
 
 """
+    backwardsolver(::AbstractHetAgent)
+
+Return the solver used for backward iteration.
+The fallback method returns `nothing`,
+which indicates direct iteration using results from the last step as input.
+"""
+backwardsolver(::AbstractHetAgent) = nothing
+
+"""
     backward_exog!(ha::AbstractHetAgent)
 
 Compute the expected values given the current values and the law of motion of exogenous states.
 """
 function backward_exog!(ha::AbstractHetAgent)
     exogs = exogprocs(ha)
-    for n in valuevars(ha)
-        v = getvalue(ha, n)
-        ev = getexpectedvalue(ha, n)
-        backward!(ev, v, exogs...)
+    vs = valuevars(ha)
+    evs = expectedvalues(ha)
+    for i in 1:length(vs)
+        backward!(evs[i], vs[i], exogs...)
     end
 end
 
@@ -242,8 +157,7 @@ A fallback method is selected based on [`HetAgentStyle`](@ref).
 backward!(ha::AbstractHetAgent, invals...) = backward!(HetAgentStyle(ha), ha, invals...)
 
 function backward!(::TimeDiscrete, ha::AbstractHetAgent, invals...)
-    foreach(n->copyto!(getlastbackwardtarget(ha, n), getbackwardtarget(ha, n)),
-        backwardtargets(ha))
+    foreach(x->copyto!(x[2], x[1]), backwardtargets(ha))
     backward_exog!(ha)
     backward_endo!(ha, expectedvalues(ha)..., invals...)
 end
@@ -288,8 +202,16 @@ The fallback method returns `true` if [`supconverged`](@ref) returns `true`
 for all pairs of current and last policies while disregarding `status`.
 """
 backward_converged(ha::AbstractHetAgent, st, tol::Real=1e-8) =
-    all(n->supconverged(getbackwardtarget(ha, n), getlastbackwardtarget(ha, n), tol),
-        backwardtargets(ha))
+    all(x->supconverged(x[1], x[2], tol), backwardtargets(ha))
+
+"""
+    forwardsolver(::AbstractHetAgent)
+
+Return the solver used for forward iteration.
+The fallback method returns `nothing`,
+which indicates direct iteration using results from the last step as input.
+"""
+forwardsolver(::AbstractHetAgent) = nothing
 
 """
     forward!(ha::AbstractHetAgent, invals...)
@@ -345,10 +267,10 @@ end
 
 function initdist!(ha::AbstractHetAgent)
     D = getdist(ha)
-    exogs = exogstates(ha)
+    exogs = exogprocs(ha)
     Nexog = length(exogs)
     if Nexog > 0
-        ds = ntuple(i->getexog(ha, exogs[i]).d, Nexog)
+        ds = ntuple(i->exogs[i].d, Nexog)
         _initdist!(D, ds...)
     else
         fill!(D, 1/length(D))
@@ -356,10 +278,9 @@ function initdist!(ha::AbstractHetAgent)
 end
 
 function initendo!(ha::AbstractHetAgent)
+    endos = endoprocs(ha)
     endopols = endopolicies(ha)
-    for (i, endo) in enumerate(endostates(ha))
-        update!(getendo(ha, endo), i, getpolicy(ha, getproperty(endopols, endo)))
-    end
+    foreach(i->update!(endos[i], i, endopols[i]), 1:length(endos))
 end
 
 function forward_init!(::TimeDiscrete, ha::AbstractHetAgent, invals...)
@@ -400,9 +321,22 @@ function aggregate(ha::AbstractHetAgent, invals...)
     N = length(D)
     s2 = stride1(D)
     function _agg(i)
-        pol = getpolicy(ha, pols[i])
+        pol = pols[i]
         s1 = stride1(pol)
         return BLAS.dot(N, pol, s1, D, s2)
     end
     return ntuple(_agg, length(pols))
+end
+
+show(io::IO, ha::AbstractHetAgent) = print(io, typeof(ha))
+
+function show(io::IO, ::MIME"text/plain", ha::AbstractHetAgent)
+    join(io, size(getdist(ha)), '×')
+    print(io, " ", typeof(ha))
+    nendo = length(endoprocs(ha))
+    print(io, " with ", nendo, " endogenous state")
+    nendo > 1 && print(io, "s")
+    nexog = length(exogprocs(ha))
+    print(io, " and ", nexog, " exogenous state")
+    nexog > 1 && print(io, "s")
 end

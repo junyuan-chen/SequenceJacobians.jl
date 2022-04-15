@@ -1,14 +1,19 @@
-struct HetBlock{HA<:AbstractHetAgent,ins,outs,NI} <: AbstractBlock{ins,outs}
+struct HetBlock{HA<:AbstractHetAgent,TF<:AbstractFloat,ins,outs,NI} <: AbstractBlock{ins,outs}
     invars::NTuple{NI,VarSpec}
     ssins::Set{Symbol}
     ha::HA
     ssargs::Dict{Symbol,Any}
+    ssstatus::Ref{NamedTuple{(:initialized, :solved), Tuple{Bool, Bool}}}
     jacargs::Dict{Symbol,Any}
+    diffargs::Ref{NamedTuple{(:twosided, :epsilon), Tuple{Bool, TF}}}
     function HetBlock(ins::NTuple{NI,Symbol}, invars::NTuple{NI,VarSpec},
             ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, ha::HA, ssargs::Dict{Symbol,Any},
             jacargs::Dict{Symbol,Any}) where {NI,NO,HA}
         _checkinsouts(ins, outs, ssins)
-        return new{HA,ins,outs,NI}(invars, ssins, ha, ssargs, jacargs)
+        ssstatus = Ref((initialized=false, solved=false))
+        TF = eltype(getdist(ha))
+        diffargs = Ref((twosided=true, epsilon=default_relstep(Val(:central), TF)))
+        return new{HA,TF,ins,outs,NI}(invars, ssins, ha, ssargs, ssstatus, jacargs, diffargs)
     end
 end
 
@@ -21,7 +26,7 @@ end
 _verbose(verbose::Integer) = (verbose>0, Int(verbose))
 _verbose(verbose::Bool) = (verbose, 20)
 
-function _backwardss!(ha, invals, maxbackiter, backtol, verbose, pgap)
+function _backward!(ha, invals, maxbackiter, backtol, verbose, pgap)
     iter = 0
     backconverged = false
     while iter < maxbackiter
@@ -40,7 +45,7 @@ function _backwardss!(ha, invals, maxbackiter, backtol, verbose, pgap)
     return backconverged
 end
 
-function _forwardss!(ha, invals, maxforiter, fortol, verbose, pgap)
+function _forward!(ha, invals, maxforiter, fortol, verbose, pgap)
     forconverged = false
     iter = 0
     while iter < maxforiter
@@ -59,23 +64,36 @@ function _forwardss!(ha, invals, maxforiter, fortol, verbose, pgap)
     return forconverged
 end
 
-function steadystate!(b::HetBlock, varvals::NamedTuple)
-    ha = b.ha
-    invals = map(k->getfield(varvals, k), inputs(b))
+function backward!(::Nothing, b::HetBlock, invals::Tuple)
     verbose, pgap = _verbose(get(b.ssargs, :verbose, false))
-    # Backward iterations
-    backward_init!(ha, invals...)
     maxbackiter = get(b.ssargs, :maxbackiter, 1000)
     backtol = get(b.ssargs, :backtol, 1e-8)
-    backconverged = _backwardss!(ha, invals, maxbackiter, backtol, verbose, pgap)
-    # Forward iterations
-    forward_init!(ha, invals...)
+    return _backward!(b.ha, invals, maxbackiter, backtol, verbose, pgap)
+end
+
+function forward!(::Nothing, b::HetBlock, invals::Tuple)
+    initendo!(b.ha)
+    verbose, pgap = _verbose(get(b.ssargs, :verbose, false))
     maxforiter = get(b.ssargs, :maxforiter, 5000)
     fortol = get(b.ssargs, :fortol, 1e-10)
-    forconverged = _forwardss!(ha, invals, maxforiter, fortol, verbose, pgap)
-    backconverged && forconverged && (b.jacargs[:ssfound] = true)
+    return _forward!(b.ha, invals, maxforiter, fortol, verbose, pgap)
+end
+
+function steadystate!(b::HetBlock, varvals::NamedTuple)
+    invals = map(k->getfield(varvals, k), inputs(b))
+    initialized = b.ssstatus[].initialized
+    if !initialized
+        backward_init!(b.ha, invals...)
+        initdist!(b.ha)
+        b.ssstatus[] = merge(b.ssstatus[], (initialized=true,))
+    end
+    bsolver = backwardsolver(b.ha)
+    backconverged = backward!(bsolver, b, invals)
+    fsolver = forwardsolver(b.ha)
+    forconverged = forward!(fsolver, b, invals)
+    backconverged && forconverged && (b.ssstatus[] = merge(b.ssstatus[], (solved=true,)))
     # Obtain aggregate outcomes
-    vals = aggregate(ha, invals...)
+    vals = aggregate(b.ha, invals...)
     return merge(varvals, NamedTuple{outputs(b)}(vals))
 end
 
@@ -83,6 +101,7 @@ struct HetAgentJacCache{HA<:AbstractHetAgent, FX<:Tuple, DC, TF<:AbstractFloat, 
     ha::HA
     hass::HA
     nT::Int
+    epsilon::TF
     fxs::FX
     df::Array{TF,M}
     dcache::DC
@@ -106,7 +125,7 @@ end
 
 function HetAgentJacCache(b::HetBlock, nT::Int)
     # Check whether steady state has been found
-    get(b.jacargs, :ssfound, false) ||
+    b.ssstatus[].solved ||
         error("must find the steady state for HetBlock before computing Jacobians")
     ha = deepcopy(b.ha)
     hass = b.ha
@@ -115,11 +134,15 @@ function HetAgentJacCache(b::HetBlock, nT::Int)
     ssize = size(D)
     N = ndims(D)
     M = N + 1
-    fxs = (getvalues(ha)..., getpolicies(ha)...)
+    Vs = valuevars(ha)
+    pols = policies(ha)
+    fxs = (Vs..., pols...)
     df = Array{TF,M}(undef, ssize..., length(fxs))
-    dcache = GradientCache(df, one(TF))
+    fdtype = b.diffargs[].twosided ? Val(:central) : Val(:forward)
+    epsilon = b.diffargs[].epsilon
+    dcache = GradientCache(df, one(TF), fdtype)
 
-    dEVs = [Array{TF,N}(undef, ssize...) for _ in 1:length(valuevars(ha))]
+    dEVs = [Array{TF,N}(undef, ssize...) for _ in 1:length(Vs)]
     dYs = Dict{Int,Matrix{TF}}()
     dDs = Dict{Int,Array{TF,M}}()
     Es = Dict{Int,Array{TF,M}}()
@@ -127,16 +150,16 @@ function HetAgentJacCache(b::HetBlock, nT::Int)
     endos = endoprocs(ha)
     if nT > 1
         Etemp = similar(D)
-        for (i, n) in enumerate(policies(ha))
+        for (i, n) in enumerate(pols)
             E = Array{TF,M}(undef, ssize..., nT-1)
             Es[i] = E
-            pol = getpolicy(ha, n)
+            pol = pols[i]
             _expectation_vector!(E, Etemp, nT, pol, exogs, endos)
         end
     end
     Js = Dict{Int,Dict{Int,Matrix{TF}}}()
     return HetAgentJacCache{typeof(ha),typeof(fxs),typeof(dcache),TF,M,N}(
-        ha, hass, nT, fxs, df, dcache, dEVs, dYs, dDs, Es, Js)
+        ha, hass, nT, epsilon, fxs, df, dcache, dEVs, dYs, dDs, Es, Js)
 end
 
 function _setEV!(ev::AbstractArray, evss::AbstractArray, dev::AbstractArray, x::Real)
@@ -185,7 +208,7 @@ function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varval
     end
 
     val = varvals[ins[i]]
-    finite_difference_gradient!(ca.df, f1!, val, ca.dcache)
+    finite_difference_gradient!(ca.df, f1!, val, ca.dcache, absstep=ca.epsilon)
 
     exogs = exogprocs(ha)
     nV = length(valuevars(ha))
@@ -202,8 +225,9 @@ function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varval
     dDs = splitdimsview(dD)
 
     # Assume policies associated with endogenous states are placed in the front
-    das = ntuple(k->Vs[k+nV], length(endostates(ha)))
-    forward_shock!(dDs[1], Dss, endoprocs(ha)..., das...)
+    endos = endoprocs(ha)
+    das = ntuple(k->Vs[k+nV], length(endos))
+    forward_shock!(dDs[1], Dss, endos..., das...)
 
     npol = length(policies(ha))
     dY = haskey(ca.dYs, i) ? ca.dYs[i] : (ca.dYs[i] = Matrix{TF}(undef, nT, npol))
@@ -234,7 +258,7 @@ function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varval
             for k in 1:nV
                 backward!(ca.dEVs[k], Vs[k], exogs...)
             end
-            forward_shock!(dDs[t], Dss, endoprocs(ha)..., das...)
+            forward_shock!(dDs[t], Dss, endos..., das...)
             @inbounds for o in eachindex(vas)
                 va = vas[o]
                 dY[t,o] = BLAS.dot(length(vDss), vDss, strvDss, va, stride1(va))
@@ -247,13 +271,30 @@ end
 
 jacbyinput(::HetBlock) = true
 
+_fdtype(::GradientCache{T1,T2,T3,T4,fdtype}) where {T1,T2,T3,T4,fdtype} = fdtype
+
+function _getjaccache(b::HetBlock, nT::Int)
+    _makejacca() = HetAgentJacCache(b, nT)
+    if haskey(b.jacargs, :jacca)
+        ca = b.jacargs[:jacca]
+        ca.nT == nT && ca.hass === b.ha || return _makejacca()
+        twosided = b.diffargs[].twosided
+        if twosided
+            _fdtype(ca.dcache) == Val(:central) || return _makejacca()
+        else
+            _fdtype(ca.dcache) == Val(:forward) || return _makejacca()
+        end
+        b.diffargs[].epsilon == ca.epsilon || return _makejacca()
+        return ca
+    else
+        return _makejacca()
+    end
+end
+
 # ! To do: consider shocks to exogenous law of motion and aggregation method
 function jacobian(b::HetBlock, ::Val{i}, nT::Int, varvals::NamedTuple) where i
-    _makejacca() = HetAgentJacCache(b, nT)
-    ca = get!(_makejacca, b.jacargs, :jacca)
-    # Still need to allocate a new one if the existing one is not usable
-    ca.nT == nT && ca.hass === b.ha || (ca = HetAgentJacCache(b, nT))
-
+    ca = _getjaccache(b, nT)
+    b.jacargs[:jacca] = ca
     evs = expectedvalues(ca.ha)
     evsss = expectedvalues(ca.hass)
 
@@ -266,4 +307,11 @@ function getjacmap(b::HetBlock, J::HetAgentJacCache,
         i::Int, ii::Int, r::Int, rr::Int, nT::Int)
     j = J.Js[i][r]
     return LinearMap(j), false
+end
+
+show(io::IO, b::HetBlock) = print(io, "HetBlock($(b.ha))")
+
+function show(io::IO, ::MIME"text/plain", b::HetBlock)
+    println(io, "HetBlock($(b.ha)):")
+    _showinouts(io, b)
 end

@@ -2,14 +2,13 @@ module ExampleUtils
 
 export lhs_equals_rhs_interpolate!
 
-function lhs_equals_rhs_interpolate!(li, lp, lhs, rhs)
-    nj = size(rhs, 2)
+function lhs_equals_rhs_interpolate!(li, lp, lhs, rhs, imax=size(rhs, 1), jmax=size(rhs, 2))
     i = 1
-    @inbounds for j in 1:nj
+    @inbounds for j in 1:jmax
         while true
             if lhs[i] < rhs[i,j]
                 break
-            elseif i < nj
+            elseif i < imax
                 i += 1
             else
                 break

@@ -1,12 +1,12 @@
 module KrusellSmith
 
 using ..SequenceJacobians
-using ..SequenceJacobians.RBC: firm
+using ..SequenceJacobians.RBC: firm_block
 
-import SequenceJacobians: endostates, endopolicies, exogstates, valuevars, policies,
-    backward_init!, backward_endo!
+import SequenceJacobians: endoprocs, exogprocs, valuevars, expectedvalues, policies,
+    backwardtargets, backward_init!, backward_endo!
 
-export kshhblock, ksblocks
+export KSHousehold, kshhblock, ksblocks
 
 struct KSHousehold{TF<:AbstractFloat} <: AbstractHetAgent
     aproc::EndoProc{TF,2}
@@ -44,11 +44,12 @@ function KSHousehold(amin, amax, Na, ρe, σe, Ne)
         coh, cohnext, Va, EVa, D, Dtemp, Dlast)
 end
 
-endostates(::KSHousehold) = (:aproc,)
-endopolicies(::KSHousehold) = (aproc=:a,)
-exogstates(::KSHousehold) = (:eproc,)
-valuevars(::KSHousehold) = (:Va,)
-policies(::KSHousehold) = (:a, :c)
+endoprocs(h::KSHousehold) = (h.aproc,)
+exogprocs(h::KSHousehold) = (h.eproc,)
+valuevars(h::KSHousehold) = (h.Va,)
+expectedvalues(h::KSHousehold) = (h.EVa,)
+policies(h::KSHousehold) = (h.a, h.c)
+backwardtargets(h::KSHousehold) = (h.a=>h.alast, h.c=>h.clast)
 
 function backward_init!(h::KSHousehold, r, w, β, eis)
     h.coh .= (1 + r) .* grid(h.aproc) .+ w .* grid(h.eproc)'
@@ -82,7 +83,7 @@ end
 
 function ksblocks(; hhkwargs...)
     bhh = kshhblock(0, 200, 500, 0.966, 0.5, 7; hhkwargs...)
-    bfirm = block(firm, [lag(:K), :L, :Z, :α, :δ], [:r, :w, :Y])
+    bfirm = firm_block()
     bmkt = block(mkt_clearing, [:K, :A, :Y, :C, :δ], [:asset_mkt, :goods_mkt])
     return bhh, bfirm, bmkt
 end

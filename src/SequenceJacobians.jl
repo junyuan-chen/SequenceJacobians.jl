@@ -1,10 +1,10 @@
 module SequenceJacobians
 
 using Base: RefValue
-using FiniteDiff: finite_difference_gradient!, GradientCache
+using FiniteDiff: finite_difference_gradient!, GradientCache, default_relstep
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: BLAS, I, UniformScaling, LU, lu!, ldiv!, norm, dot, stride1
+using LinearAlgebra: BLAS, I, UniformScaling, Factorization, LU, lu!, ldiv!, norm, dot, stride1
 using LinearMaps
 using MacroTools
 using MacroTools: postwalk
@@ -82,12 +82,14 @@ export supconverged,
        getlastdist,
        getdistendo,
        update!,
+       backwardsolver,
        backward!,
        backward_endo!,
        backward_steadystate!,
        backward_init!,
        backward_status,
        backward_converged,
+       forwardsolver,
        forward!,
        forward_steadystate!,
        forward_init!,
@@ -173,6 +175,7 @@ function __init__()
     end
     @require NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56" begin
         include("solvers/nlsolve.jl")
+        include("solvers/anderson.jl")
     end
     @require Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665" begin
         include("solvers/roots.jl")

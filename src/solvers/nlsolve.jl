@@ -1,5 +1,5 @@
 export NLsolve_newton, NLsolve_trust_region, NLsolve_anderson, NLsolve_broyden,
-    NLsolve_Solver, NLsolve_Cache
+    NLsolve_Solver, NLsolve_Cache, backwardsolvercache, forwardsolvercache
 
 abstract type AbstractNLsolveSolver end
 
@@ -78,7 +78,8 @@ function solve!(ca::NLsolve_Cache{CA}, x0;
         autoscale::Bool = true,
         beta::Real = 1,
         aa_start::Integer = 1,
-        droptol::Real = convert(real(eltype(x0)), 1e10)) where CA
+        droptol::Real = convert(real(eltype(x0)), 1e10),
+        verbose::Bool=false, kwargs...) where CA
 
     if show_trace
         NLsolve.@printf "Iter     f(x) inf-norm    Step 2-norm \n"
@@ -97,7 +98,12 @@ function solve!(ca::NLsolve_Cache{CA}, x0;
         r = NLsolve.broyden(ca.df, x0, xtol, ftol, iterations,
             store_trace, show_trace, extended_trace, linesearch)
     end
-    return r.zero, NLsolve.converged(r)
+    converged = NLsolve.converged(r)
+    converged ||
+        @warn "solver did not converge with ftol=$(r.ftol) after $(r.iterations) steps"
+    converged && verbose &&
+        println("solver converged with ftol=$(r.ftol) after $(r.iterations) steps")
+    return r.zero::typeof(x0), converged
 end
 
 # May specify solver with the method keyword
@@ -107,3 +113,113 @@ function solve!(::Type{NLsolve_Solver}, f!, x0; kwargs...)
 end
 
 solve!(s::NLsolve_Solver, f!, x0; kwargs...) = solve!(typeof(s), f!, x0; kwargs...)
+
+function backfunc!(y, x, ha, invals)
+    backward_endo!(ha, splitdimsview(x)..., invals...)
+    backward_exog!(ha)
+    k = 1
+    @inbounds for ev in expectedvalues(ha)
+        @simd for i in eachindex(ev)
+            # The order matters
+            y[k] = ev[i] - x[k]
+            k += 1
+        end
+    end
+end
+
+function backwardsolvercache(::Type{NLsolve_anderson}, b::HetBlock, invals::Tuple;
+        m::Integer=1, kwargs...)
+    backward_exog!(b.ha)
+    evs = expectedvalues(b.ha)
+    x0 = Array{eltype(getdist(b.ha)),ndims(evs[1])+1}(undef, size(evs[1])..., length(evs))
+    f!(y, x) = backfunc!(y, x, b.ha, invals)
+    df = NLsolve.NonDifferentiable(f!, x0, similar(x0); inplace=true)
+    ca = NLsolve.AndersonCache(df, m)
+    # Set initial values
+    x0 = ca.x
+    k = 1
+    evs = expectedvalues(b.ha)
+    @inbounds for ev in expectedvalues(b.ha)
+        @simd for i in eachindex(ev)
+            x0[k] = ev[i]
+            k += 1
+        end
+    end
+    return NLsolve_Cache{typeof(ca),typeof(df)}(ca, df)
+end
+
+function _backward!(ca::NLsolve_Cache{<:NLsolve.AndersonCache}, b::HetBlock,
+        invals::Tuple, maxbackiter, backtol, verbose, beta, aastart)
+    # Update invals
+    f!(y, x) = backfunc!(y, x, b.ha, invals)
+    ca.df.f = f!
+    backconverged = anderson!(ca, b, true, maxbackiter, backtol, verbose, beta, aastart)
+    # Copy EVs back to ha
+    k = 1
+    @inbounds for ev in expectedvalues(b.ha)
+        @simd for i in eachindex(ev)
+            ev[i] = ca.ca.x[k]
+            k += 1
+        end
+    end
+    return backconverged
+end
+
+function backward!(::Type{NLsolve_anderson}, b::HetBlock, invals::Tuple)
+    if haskey(b.ssargs, :backwardsolvercache)
+        ca = b.ssargs[:backwardsolvercache]::NLsolve_Cache{<:NLsolve.AndersonCache}
+    else
+        m = get(b.ssargs, :mbackward, 1)::Int
+        ca = backwardsolvercache(NLsolve_anderson, b, invals, m=m)
+        b.ssargs[:backwardsolvercache] = ca
+    end
+    verbose = haskey(b.ssargs, :verbose) ? b.ssargs[:verbose]>0 : false
+    maxbackiter = get(b.ssargs, :maxbackiter, 5000)
+    backtol = get(b.ssargs, :backtol, 1e-8)
+    beta = get(b.ssargs, :backbeta, 0.7)
+    aastart = get(b.ssargs, :backaastart, 100)
+    return _backward!(ca, b, invals, maxbackiter, backtol, verbose, beta, aastart)
+end
+
+function forfunc!(y, x, ha)
+    D = getdist(ha)
+    Dendo = getdistendo(ha)
+    forward!(Dendo, x, endoprocs(ha)...)
+    forward!(D, Dendo, exogprocs(ha)...)
+    @inbounds @simd for i in eachindex(y)
+        y[i] = D[i] - x[i]
+    end
+end
+
+function forwardsolvercache(::Type{NLsolve_anderson}, b::HetBlock; m::Integer=1, kwargs...)
+    x0 = getdist(b.ha)
+    f!(y, x) = forfunc!(y, x, b.ha)
+    df = NLsolve.NonDifferentiable(f!, x0, copy(x0); inplace=true)
+    ca = NLsolve.AndersonCache(df, m)
+    # Set initial values
+    copyto!(ca.x, x0)
+    return NLsolve_Cache{typeof(ca),typeof(df)}(ca, df)
+end
+
+function _forward!(ca::NLsolve_Cache{<:NLsolve.AndersonCache}, b::HetBlock,
+        invals::Tuple, maxforiter, fortol, verbose, beta, aastart)
+    initendo!(b.ha)
+    forconverged = anderson!(ca, b, false, maxforiter, fortol, verbose, beta, aastart)
+    return forconverged
+end
+
+function forward!(::Type{NLsolve_anderson}, b::HetBlock, invals::Tuple)
+    if haskey(b.ssargs, :forwardsolvercache)
+        ca = b.ssargs[:forwardsolvercache]::NLsolve_Cache{<:NLsolve.AndersonCache}
+    else
+        m = get(b.ssargs, :mforward, 1)::Int
+        ca = forwardsolvercache(NLsolve_anderson, b, m=m)
+        b.ssargs[:forwardsolvercache] = ca
+    end
+    verbose = haskey(b.ssargs, :verbose) ? b.ssargs[:verbose]>0 : false
+    maxforiter = get(b.ssargs, :maxforiter, 5000)
+    fortol = get(b.ssargs, :fortol, 1e-10)
+    beta = get(b.ssargs, :forbeta, 0.7)
+    aastart = get(b.ssargs, :foraastart, 100)
+    return _forward!(ca, b, invals, maxforiter, fortol, verbose, beta, aastart)
+end

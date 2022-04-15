@@ -140,3 +140,11 @@ function getjacmap(b::CombinedBlock, J::GEJacobian, i::Int, ii::Int, r::Int, rr:
         return J.totals[vi][vo], false
     end
 end
+
+show(io::IO, ::CombinedBlock{NJ,ST}) where {NJ,ST} = print(io, "CombinedBlock($ST)")
+
+function show(io::IO, ::MIME"text/plain", b::CombinedBlock{NJ,ST,SS}) where {NJ,ST,SS}
+    print(io, "CombinedBlock($ST) with $(b.ss) and $NJ GE restriction")
+    println(io, NJ>1 ? "s:" : ":")
+    _showinouts(io, b)
+end

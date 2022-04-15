@@ -1,20 +1,22 @@
 @testset "SimpleBlock" begin
     using SequenceJacobians.RBC
     firm, household, mkt_clearing = RBC.firm, RBC.household, RBC.mkt_clearing
-    ins = [:K, :L, :Z, :α, :δ]
+    ins = (:K, :L, :Z, :α, :δ, :K)
     outs = (:r, :w, :Y)
-    b = block(firm, [lag(:K), :L, :Z, :α, :δ], outs)
+    b = block(firm, (:K, :L, :Z, :α, :δ, lag(:K)), outs)
     @test b isa SimpleBlock
     @test inputs(b) === (ins...,)
     @test ssinputs(b) == Set(ins)
     @test outputs(b) === (outs...,)
-    @test b(10.0, 1.0, 1.0, 0.3, 0.05) === NamedTuple{outs}(firm(10.0, 1.0, 1.0, 0.3, 0.05))
+    @test b(10.0, 1.0, 1.0, 0.3, 0.05, 10.0) ===
+        NamedTuple{outs}(firm(10.0, 1.0, 1.0, 0.3, 0.05, 10.0))
 
     @test_throws ArgumentError block(firm, (), outs)
     @test_throws ArgumentError block(firm, ins, ())
     @test_throws ArgumentError block(firm, ins, outs, ssins=:n)
     @test_throws ArgumentError block(firm, ins, ins)
 
+    # The input names do not match the functions
     ins = [:K, :K, :L, :w, :eis, :frisch, :φ, :δ]
     outs = [:C, :I]
     b = block(household, [:K, lag(:K), :L, :w, :eis, :frisch, :φ, :δ], outs)
@@ -26,15 +28,21 @@
         [:r, lead(:r), :C, lead(:C), :Y, :I, :K, lag(:K), :L, :w, :eis, :β], outs)
     @test inputs(b) == (ins...,)
 
-    bfirm, bhh, bmkt, bss = rbcblocks()
+    bfirm, bhh, bmkt = rbcblocks()
     varvals = (K=2, L=1, w=1, eis=1, frisch=1, φ=0.9, δ=0.025)
     varvals = steadystate!(bhh, varvals)
     @test varvals[:C] ≈ 1.1111111111111112
     @test varvals[:I] ≈ 0.05
 
     @test jacobian(bhh, Val(1), 5, varvals) ≈ [0, 1]
-    @test jacobian(bhh, Val(2), 5, varvals) ≈ [0, -0.975]
-    @test jacobian(bhh, Val(8), 5, varvals) ≈ [0, 2]
+    @test jacobian(bhh, Val(7), 5, varvals) ≈ [0, 2]
+    @test jacobian(bhh, Val(8), 5, varvals) ≈ [0, -0.975]
+
+    @test sprint(show, bmkt) == "SimpleBlock(mkt_clearing)"
+    @test sprint(show, MIME("text/plain"), bmkt) == """
+        SimpleBlock(mkt_clearing):
+          inputs:  r, C, Y, I, K, L, w, eis, β, lead(r), lead(C), lag(K)
+          outputs: goods_mkt, euler, walras"""
 end
 
 @testset "HetBlock" begin
@@ -106,6 +114,16 @@ end
     @test j.Js[1][1][5,:] ≈ [2.79839241, 3.42915491, 4.05731394, 4.68424741, 5.31162232] atol=1e-6
     @test j.Js[1][2][1,:] ≈ [0.09578626, -0.68185568, -0.64125217, -0.60439044, -0.57061299] atol=1e-6
     @test j.Js[1][2][5,:] ≈ [0.08926242, 0.12116544, 0.15313027, 0.18541724, 0.21771175] atol=1e-6
+
+    @test sprint(show, b.ha) == "KSHousehold{Float64}"
+    @test sprint(show, MIME("text/plain"), b.ha) ==
+        "500×7 KSHousehold{Float64} with 1 endogenous state and 1 exogenous state"
+
+    @test sprint(show, b) == "HetBlock(KSHousehold{Float64})"
+    @test sprint(show, MIME("text/plain"), b) == """
+        HetBlock(KSHousehold{Float64}):
+          inputs:  r, w, β, eis
+          outputs: A, C"""
 end
 
 @testset "CombinedBlock" begin
@@ -188,6 +206,12 @@ end
            0 0.00736934  -0.97297837;
            0 0.00370042   0.00736934 ]
     @test J.Gs[:r][:Q] ≈ Jrq atol=1e-8
+
+    @test sprint(show, b) == "CombinedBlock(GSL_Hybrids)"
+    @test sprint(show, MIME("text/plain"), b) == """
+        CombinedBlock(GSL_Hybrids) with 2×2 SteadyState{Float64} and 2 GE restrictions:
+          inputs:  Y, w, Z, r
+          outputs: Q, K, N, mc"""
 end
 
 @testset "SolvedBlock" begin
@@ -208,4 +232,10 @@ end
     @test jacbyinput(bj) == false
     @test jacobian(bj, 3, varvals) === J
     @test_throws ErrorException jacobian(bj, 5, varvals)
+
+    @test sprint(show, bj) == "SolvedBlock(CombinedBlock(Roots_Default))"
+    @test sprint(show, MIME("text/plain"), bj) == """
+        SolvedBlock(CombinedBlock(Roots_Default)):
+          inputs:  mc, r, Y, κp, mup
+          outputs: pip"""
 end

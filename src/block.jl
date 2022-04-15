@@ -18,6 +18,9 @@ name(v::Symbol) = v
 
 convert(::Type{Symbol}, v::VarSpec) = v.name
 
+show(io::IO, v::VarSpec) =
+    (s = v.shift; n = v.name; print(io, s>0 ? "lead($n)" : s<0 ? "lag($n)" : n))
+
 abstract type AbstractBlock{ins,outs} end
 
 inputs(::AbstractBlock{ins}) where ins = ins
@@ -134,4 +137,23 @@ function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
             end
         end
     end
+end
+
+function show(io::IO, b::SimpleBlock)
+    fname = String(typeof(b).parameters[2].name.name)[2:end]
+    print(io, "SimpleBlock($fname)")
+end
+
+function _showinouts(io::IO, b::AbstractBlock)
+    print(io, "  inputs:  ")
+    join(io, invars(b), ", ")
+    print(io, "\n  outputs: ")
+    join(io, outputs(b), ", ")
+end
+
+function show(io::IO, ::MIME"text/plain", b::SimpleBlock)
+    fname = String(typeof(b).parameters[2].name.name)[2:end]
+    print(io, "SimpleBlock($fname)")
+    println(io, hascache(b) ? " with cache:" : ":")
+    _showinouts(io, b)
 end
