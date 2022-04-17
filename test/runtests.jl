@@ -11,7 +11,7 @@ using SequenceJacobians: jacbyinput
 
 import SequenceJacobians: backwardsolver, forwardsolver
 
-if VERSION >= v"1.7" && Sys.isapple()
+if VERSION >= v"1.7"
     using OpenBLAS32_jll
 end
 
@@ -23,7 +23,8 @@ const tests = [
     "blocks",
     "model",
     "jacobian",
-    "twoasset"
+    "twoasset",
+    "estimation"
 ]
 
 printstyled("Running tests:\n", color=:blue, bold=true)

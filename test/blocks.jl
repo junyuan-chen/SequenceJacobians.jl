@@ -41,7 +41,7 @@
     @test sprint(show, bmkt) == "SimpleBlock(mkt_clearing)"
     @test sprint(show, MIME("text/plain"), bmkt) == """
         SimpleBlock(mkt_clearing):
-          inputs:  r, C, Y, I, K, L, w, eis, β, lead(r), lead(C), lag(K)
+          inputs:  r, C, Y, I, K, L, w, eis, β, lead(C), lag(K), lead(r)
           outputs: goods_mkt, euler, walras"""
 end
 
@@ -128,7 +128,7 @@ end
 
 @testset "CombinedBlock" begin
     using SequenceJacobians: TwoAsset as ta
-    ins0 = (:pip, :mc, :r, :Y, :κp, :mup, lead(:r), lead(:pip), lead(:Y))
+    ins0 = (:pip, :mc, :r, :Y, :κp, :mup, lead(:Y), lead(:pip), lead(:r))
     outs = :pip
     bpricing = block(ta.pricing, ins0, :nkpc)
     mpricing = model(bpricing)
@@ -164,7 +164,7 @@ end
     @test all(isapprox.(J.Gs[:Y][:pip], 0, atol=1e-8))
     @test all(isapprox.(J.Gs[:r][:pip], 0, atol=1e-8))
 
-    ins0 = (:p, :div, :r, lead(:r), lead(:div), lead(:p))
+    ins0 = (:p, :div, :r, lead(:div), lead(:p), lead(:r))
     outs = :p
     barbitrage = block(ta.arbitrage, ins0, :equity)
     ins = (:div, :r)
@@ -185,8 +185,7 @@ end
     @test J.Gs[:r][:p] ≈ Jr atol=1e-8
 
     blabor = block(ta.labor, (:Y, :w, :K, :Z, :α, lag(:K)), (:N, :mc))
-    ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lead(:r), lead(:K), lead(:Q), lead(:mc),
-        lag(:K), lead(:Z), lead(:N)]
+    ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lag(:K), lead(:K), lead(:N), lead(:Q), lead(:Z), lead(:mc), lead(:r)]
     binvest = block(ta.investment, ins0, [:inv, :val])
     calis = [:Y, :w, :Z, :α, :r, :δ, :εI]
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],

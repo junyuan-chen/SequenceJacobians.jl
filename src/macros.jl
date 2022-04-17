@@ -7,6 +7,16 @@ function _isleadlag(ex)
     return true
 end
 
+function _islessleadlag(ex1, ex2)
+    n1, n2 = ex1.args[2], ex2.args[2]
+    n1 == n2 || return isless(n1, n2)
+    f1, f2 = ex1.args[1], ex2.args[1]
+    f1 == f2 || return f1 == :lag
+    s1 = length(ex1.args) == 2 ? 1 : ex1.args[3]
+    s2 = length(ex2.args) == 2 ? 1 : ex2.args[3]
+    return f1 == :lag ? isless(s2, s1) : isless(s1, s2)
+end
+
 function _parseins(exprs)
     ins = :(())
     for x in exprs
@@ -65,8 +75,8 @@ macro simple(args...)
     leadlags = Set{Expr}()
     outs = []
     body = postwalk(x->_walkbodysimple(x, leadlags, outs), body)
-    leadlags = (leadlags...,)
-    fargs = (ins..., map(x->Symbol(x.args...), leadlags)...)
+    leadlags = sort!([leadlags...], lt=_islessleadlag)
+    fargs = (ins..., ntuple(i->Symbol(leadlags[i].args...), length(leadlags))...)
     ins = _parseins((ins..., leadlags...))
     isempty(outs) && error("explicit return statement is not found")
     # If multiple return statements exist, only consider the first one found
@@ -193,8 +203,8 @@ macro implicit(args...)
     leadlags = Set{Expr}()
     parsedrets = []
     body = postwalk(x->_walkbodyimplicit(x, leadlags, args, parsedrets), body)
-    leadlags = (leadlags...,)
-    fargs = (args..., map(x->Symbol(x.args...), leadlags)...)
+    leadlags = sort!([leadlags...], lt=_islessleadlag)
+    fargs = (args..., ntuple(i->Symbol(leadlags[i].args...), length(leadlags))...)
     argquote = _parseins((args..., leadlags...))
     isempty(parsedrets) && error("explicit return statement is not found")
     # If multiple return statements exist, only consider the first one found

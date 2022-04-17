@@ -24,7 +24,7 @@ function block(ha::AbstractHetAgent, ins, outs; ssins=ins, ssargs=nothing, jacar
 end
 
 _verbose(verbose::Integer) = (verbose>0, Int(verbose))
-_verbose(verbose::Bool) = (verbose, 20)
+_verbose(verbose::Bool) = (verbose, 100)
 
 function _backward!(ha, invals, maxbackiter, backtol, verbose, pgap)
     iter = 0
@@ -66,7 +66,7 @@ end
 
 function backward!(::Nothing, b::HetBlock, invals::Tuple)
     verbose, pgap = _verbose(get(b.ssargs, :verbose, false))
-    maxbackiter = get(b.ssargs, :maxbackiter, 1000)
+    maxbackiter = get(b.ssargs, :maxbackiter, 5000)
     backtol = get(b.ssargs, :backtol, 1e-8)
     return _backward!(b.ha, invals, maxbackiter, backtol, verbose, pgap)
 end

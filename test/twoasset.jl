@@ -106,7 +106,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
     end
 
     @testset "SteadyState Jacobian" begin
-        backwardsolver(::ta.TwoAssetHousehold) = NLsolve_anderson
+        Main.backwardsolver(::ta.TwoAssetHousehold) = NLsolve_anderson
         mss = ta.twoassetmodelss()
         mss.pool[1].ssargs[:backaastart] = 100
         calis = Dict{Symbol,Float64}(:Y=>1, :N=>1, :K=>10, :r=>0.0125, :rstar=>0.0125,

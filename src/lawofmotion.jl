@@ -156,7 +156,7 @@ function assetgrid(amin::Real, amax::Real, n::Int; pivot::Real=0.25)
         aleft = pivot
         pivot += abs(amin)
     end
-    agrid = [exp(a)-pivot for a in range(log(aleft), log(amax+pivot), n)]
+    agrid = [exp(a)-pivot for a in range(log(aleft), log(amax+pivot), length=n)]
     # Ensure the left endpoint is exactly amin
     agrid[1] = amin
     return agrid

@@ -55,8 +55,7 @@
 
     @testset "KrusellSmith" begin
         using SequenceJacobians.KrusellSmith
-        bhh, bfirm, bmkt = ksblocks()
-        m = model([bhh, bfirm, bmkt])
+        m = model(ksblocks())
         calis = [:eis=>1, :δ=>0.025, :α=>0.11, :L=>1]
         tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
