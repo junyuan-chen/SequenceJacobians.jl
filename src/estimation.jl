@@ -22,6 +22,20 @@ function autocov(x::AbstractArray{TF,3}, σ::AbstractVector{TF}) where TF<:Abstr
     return autocov!(r, x, σ)
 end
 
+function autocor!(r::AbstractArray{Complex{TF},3}, x::AbstractArray{TF,3},
+        σ::AbstractVector{TF}) where TF<:AbstractFloat
+    cov = autocov!(r, x, σ)
+    sd = sqrt.(diag(view(cov,1,:,:)))
+    cov .= cov ./ sd' ./ reshape(sd,1,1,length(sd))
+    return cov
+end
+
+function autocor(x::AbstractArray{TF,3}, σ::AbstractVector{TF}) where TF<:AbstractFloat
+    T, O, _ = size(x)
+    r = Array{Complex{TF},3}(undef, T, O, O)
+    return autocor!(r, x, σ)
+end
+
 function autocov!(V::AbstractMatrix{TF}, r::AbstractArray{TF,3},
         error::Union{Diagonal,UniformScaling,Nothing}=nothing) where TF<:AbstractFloat
     T, O, _ = size(r)
@@ -36,7 +50,7 @@ function autocov!(V::AbstractMatrix{TF}, r::AbstractArray{TF,3},
             elseif t1 < t2
                 copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))
             elseif t1 > t2
-                # Minor deviation from symmetry might exist
+                # Asymmetric
                 copyto!(view(V1,t1,:,t2,:), view(r,l,:,:)')
             elseif t1 == t2
                 copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))

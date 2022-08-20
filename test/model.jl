@@ -2,6 +2,30 @@
     using SequenceJacobians.RBC
     m = model(rbcblocks())
 
+    @test SimpleDiGraph(m) === m.dag
+    @test eltype(m) == Int
+    @test nv(m) == 20
+    @test ne(m) == 29
+    @test vertices(m) == 1:20
+    @test edges(m) == edges(m.dag)
+    @test is_directed(m)
+    @test has_vertex(m, 1)
+    @test has_edge(m, 4, 1)
+    @test inneighbors(m, 1) == 4:8
+    @test outneighbors(m, 1) == 9:11
+    z = zero(m)
+    @test nv(z) == ne(z) == 0
+    @test z isa SequenceSpaceModel
+
+    @test srcs(m) === m.srcs
+    @test vsrcs(m) == [:K, :L, :Z, :α, :δ, :eis, :frisch, :φ, :β]
+    @test sssrcs(m) === m.sssrcs
+    @test vsssrcs(m) == vsrcs(m)
+    @test dests(m) === m.dests
+    @test vdests(m) == [:goods_mkt, :euler, :walras]
+    @test isblock(m, 1)
+    @test !isblock(m, 4)
+
     @test sprint(show, m) == "{20, 29} SequenceSpaceModel"
     @test sprint(show, MIME("text/plain"), m) == """
         {20, 29} SequenceSpaceModel with 3 blocks and 17 variables:
@@ -18,6 +42,13 @@ end
         tars = [:goods_mkt=>0, :r=>0.01, :euler=>0, :Y=>1]
         inits = [:φ=>0.9, :β=>0.99, :K=>2, :Z=>1]
         ss = SteadyState(m, calis, inits, tars)
+        @test varvalstype(ss) == typeof(ss.varvals[])
+        @test blkstype(ss) == typeof(ss.blks)
+        @test scalarinputs(ss) == (:β, :φ, :Z, :K)
+        @test arrayinputs(ss) == ()
+        @test scalartargets(ss) == (:Y, :r, :euler, :goods_mkt)
+        @test arraytargets(ss) == ()
+
         f(x) = criterion!(ss, x)
         f!(y,x) = residuals!(y, ss, x)
         r = solve!(GSL_Hybrids, f!, ss.inits, xtol=1e-10)

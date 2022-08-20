@@ -1,4 +1,4 @@
-@testset "autocov" begin
+@testset "autocov autocor" begin
     using SequenceJacobians.KrusellSmith
     m = model(ksblocks())
     calis = [:eis=>1, :δ=>0.025, :α=>0.11, :L=>1]
@@ -25,5 +25,9 @@
     @test Σ[150,2,3] ≈ -3.184957224656828e-7 atol=1e-12
     @test Σ[200,2,2] ≈ -2.4343217950007922e-8 atol=1e-12
     @test Σ[200,3,4] ≈ -4.5565272153303164e-7 atol=1e-12
+
+    corr = autocor(reshape(dX, 300, 4, 2), [0.1, 0.2])
+    @test corr[1,1,:] ≈ [1.0, 0.99469738, 0.78762659, 0.60438467] atol=1e-6
+    @test corr[2,4,:] ≈ [0.45349869, 0.54275537, 0.88132246, 0.98355236] atol=1e-6
 end
 

@@ -23,6 +23,7 @@ const tests = [
     "blocks",
     "model",
     "jacobian",
+    "irf",
     "twoasset",
     "estimation"
 ]

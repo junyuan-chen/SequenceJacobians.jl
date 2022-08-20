@@ -34,7 +34,6 @@ struct TwoAssetHousehold{TF<:AbstractFloat} <: AbstractHetAgent
     li1::Array{Int,3}
     lp1::Array{TF,3}
     a_endo_con::Array{TF,3}
-    c_endo_con::Array{TF,3}
     a_con::Array{TF,3}
     Ψ1grid::Matrix{TF}
     achange::Array{TF,3}
@@ -83,7 +82,6 @@ function TwoAssetHousehold(amax, bmax, κmax, Na, Nb, Ne, Nκ, ρe, σe)
     li1 = Array{Int,3}(undef, dims1)
     lp1 = Array{Float64,3}(undef, dims1)
     a_endo_con = similar(lp1)
-    c_endo_con = similar(lp1)
     a_con = similar(lp1)
     Ψ1grid = Matrix{Float64}(undef, Na, Na)
     achange = similar(a)
@@ -106,7 +104,7 @@ function TwoAssetHousehold(amax, bmax, κmax, Na, Nb, Ne, Nκ, ρe, σe)
     return TwoAssetHousehold{eltype(c)}(aproc, bproc, eproc, κgrid, zgrid,
         li0a, lp0a, a_endo_unc, c_endo_unc, b_endo, li0b, lp0b,
         a, alast, b, blast, icons, icons0, icons1, lhs_con, li1, lp1,
-        a_endo_con, c_endo_con, a_con, Ψ1grid, achange, corefactor,
+        a_endo_con, a_con, Ψ1grid, achange, corefactor,
         Ψ, Ψ1, Ψ2, c, uc, uce, Va, Vb, EVa, EVb, Wb, Wratio, D, Dendo, Dlast)
 end
 
@@ -251,32 +249,26 @@ function backward_endo!(h::TwoAssetHousehold, EVa, EVb, zeratio, β, eis, rb, ra
     @inbounds Threads.@threads for k in 1:Ne
         iamax0 = h.icons0[k]
         iamax1 = h.icons1[k]
+        zk = h.zgrid[k]
         for j in 1:Nκ
             κ = h.κgrid[j]
             for i in 1:iamax1
                 h.lhs_con[i,j,k] = h.Wratio[i,1,k] / (1 + κ)
             end
             lhs_equals_rhs_interpolate!(vli1s[j,k], vlp1s[j,k], vlhs_cons[j,k], h.Ψ1grid, iamax1, iamax0)
-        end
 
-        # Find a' and c on the subset of (a, κ, e) grid where b is binding
-        for j in 1:Nκ
-            κj = h.κgrid[j]
+            # Find a' and c on the subset of (a, κ, e) grid where b is binding
             for i in 1:iamax0
                 li1, lp1 = h.li1[i,j,k], h.lp1[i,j,k]
-                h.a_endo_con[i,j,k] = lp1*agrid[li1]+(1-lp1)*agrid[li1+1]
+                a_endo_con = lp1*agrid[li1]+(1-lp1)*agrid[li1+1]
+                h.a_endo_con[i,j,k] = a_endo_con
                 Wb1 = (lp1* h.Wb[li1,1,k] + (1-lp1) * h.Wb[li1+1,1,k])
-                h.c_endo_con[i,j,k] = (Wb1*(1+κj))^(-eis)
-            end
-        end
+                c_endo_con = (Wb1*(1+κ))^(-eis)
 
-        # Get b on the (a, κ, e) grid by imposing b'=0
-        zk = h.zgrid[k]
-        for j in 1:Nκ
-            for i in 1:iamax0
-                ap = h.a_endo_con[i,j,k]
+                # Get b on the (a, κ, e) grid by imposing b'=0
+                ap = a_endo_con
                 ai = agrid[i]
-                h.b_endo[i,j,k] = (h.c_endo_con[i,j,k] + ap - (1+ra)*ai + bmin - zk +
+                h.b_endo[i,j,k] = (c_endo_con + ap - (1+ra)*ai + bmin - zk +
                     getΨ(ap, ai, ra, χ0, χ1, χ2)[1]) / (1+rb)
             end
         end

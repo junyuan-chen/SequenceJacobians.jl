@@ -1,3 +1,4 @@
+# Methods for linirf
 function _transform!(d::Dict, trans::Vector{Symbol}, gejac::GEJacobian)
     varvals = gejac.tjac.varvals
     for irfs in values(d)
@@ -54,6 +55,7 @@ function linirf(tjac::TotalJacobian, dshocks::ValidPathInput, endovars=nothing;
     return irfs, gejac
 end
 
+# Methods for nlirf
 function _transform!(d::Dict, trans::Vector{Symbol}, tjac::TotalJacobian)
     varvals = tjac.varvals
     for v in trans
@@ -96,3 +98,5 @@ function nlirf(tjac::TotalJacobian, shocks::ValidPathInput, endovars=nothing;
     solve!(tr; kwargs...)
     return nlirf(tr, endovars; transform=transform), tr
 end
+
+astable(irfs::Dict{Symbol}) = (; (s=>(; irfs[s]...) for s in keys(irfs))...)

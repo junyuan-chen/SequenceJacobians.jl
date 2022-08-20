@@ -80,8 +80,11 @@ zero(::Type{SequenceSpaceModel}) =
     SequenceSpaceModel(zero(SimpleDiGraph), BlockOrVar[], Dict{BlockOrVar,Int}())
 
 srcs(m::SequenceSpaceModel) = getfield(m, :srcs)
+vsrcs(m::SequenceSpaceModel) = map(i->m.pool[i], sort!(collect(srcs(m))))
 sssrcs(m::SequenceSpaceModel) = getfield(m, :sssrcs)
+vsssrcs(m::SequenceSpaceModel) = map(i->m.pool[i], sort!(collect(sssrcs(m))))
 dests(m::SequenceSpaceModel) = getfield(m, :dests)
+vdests(m::SequenceSpaceModel) = map(i->m.pool[i], sort!(collect(dests(m))))
 isblock(m::SequenceSpaceModel, v) = m.pool[v] isa AbstractBlock
 
 show(io::IO, m::SequenceSpaceModel) = print(io, "{$(nv(m)), $(ne(m))} ", typeof(m).name.name)

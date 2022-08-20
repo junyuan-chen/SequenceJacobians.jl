@@ -1,7 +1,7 @@
 using SequenceJacobians.RBC
 function rbcss()
     m = model(rbcblocks())
-    calis = [:L=>1, :r=>0.01, :eis=>1, :frisch=>1, :δ=>0.025, :α=>0.11]
+    calis = [:L=>1, :eis=>1, :frisch=>1, :δ=>0.025, :α=>0.11]
     tars = [:goods_mkt=>0, :r=>0.01, :euler=>0, :Y=>1]
     inits = [:φ=>0.9, :β=>0.99, :K=>2, :Z=>1]
     return SteadyState(m, calis, inits, tars)
@@ -15,14 +15,20 @@ end
     end
     x0 = Float64[1.0, 5.0, 2.0, 1.5, -1.0]
     @testset "GSL_Hybrids" begin
+        @test isvectorrootsolver(GSL_Hybrids)
         ca = GSL_MultirootFSolverCache(GSL_Hybrids, f!, length(x0))
         r0 = solve!(ca, x0, verbose=true)
         r1 = solve!(ca, f!, x0, verbose=true)
         r2 = solve!(GSL_Hybrids, f!, x0)
-        @test r0[1] == r1[1] == r2[1]
+        r3 = solve!(GSL_Hybrids(), f!, x0)
+        @test r0[1] == r1[1] == r2[1] == r3[1]
         @test r0[1] ≈ roots atol=1e-7
         r = solve!(ca, x0, verbose=5, ftol=0.01)
         @test r[1][2] ≈ 2.033707865566775 atol = 1e-6
+
+        ss = rbcss()
+        ca = rootsolvercache(GSL_Hybrids(), ss)
+        @test sprint(show, ca) == "GSL_MultirootFSolverCache"
     end
 end
 

@@ -6,7 +6,7 @@ using FiniteDiff: finite_difference_gradient!, GradientCache, default_relstep
 using ForwardDiff
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, Factorization, LU, lu!,
-    cholesky!, ldiv!, norm, dot, stride1
+    cholesky!, ldiv!, norm, dot, stride1, diag
 using LinearMaps
 using MacroTools
 using MacroTools: postwalk
@@ -19,13 +19,13 @@ import Base: ==, eltype, zero, show, convert
 import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
-import StatsBase: autocov!, autocov
+import StatsBase: autocov!, autocov, autocor!, autocor
 
 # Reexport
 export solve!
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
-export autocov!, autocov
+export autocov!, autocov, autocor!, autocor
 
 export supconverged,
        interpolate_y!,
@@ -116,10 +116,19 @@ export supconverged,
        SequenceSpaceModel,
        model,
        srcs,
+       vsrcs,
        sssrcs,
+       vsssrcs,
        dests,
+       vdests,
        isblock,
        SteadyState,
+       varvalstype,
+       blkstype,
+       scalarinputs,
+       arrayinputs,
+       scalartargets,
+       arraytargets,
        getvarvals,
        getval,
        inlength,
@@ -144,6 +153,7 @@ export supconverged,
 
        linirf,
        nlirf,
+       astable,
 
        loglikelihood!
 
