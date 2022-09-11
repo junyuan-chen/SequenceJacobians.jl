@@ -304,7 +304,7 @@ function jacobian(b::HetBlock, ::Val{i}, nT::Int, varvals::NamedTuple) where i
 end
 
 function getjacmap(b::HetBlock, J::HetAgentJacCache,
-        i::Int, ii::Int, r::Int, rr::Int, nT::Int)
+        i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
     j = J.Js[i][r]
     return LinearMap(j), false
 end

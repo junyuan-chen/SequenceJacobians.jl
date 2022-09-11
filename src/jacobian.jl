@@ -1,3 +1,5 @@
+const JacMap{TF} = Union{LinearMap{TF}, Matrix{<:LinearMap{TF}}}
+
 struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     parent::SequenceSpaceModel
     blks::Vector{AbstractBlock}
@@ -8,8 +10,8 @@ struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     tars::Vector{Symbol}
     ntarsrc::Vector{Int}
     excluded::Union{Set{BlockOrVar},Nothing}
-    parts::Dict{Symbol,Dict{Symbol,Matrix{LinearMap{TF}}}}
-    totals::Dict{Symbol,Dict{Symbol,LinearMap{TF}}}
+    parts::Dict{Symbol,Dict{Symbol,Matrix{<:LinearMap{TF}}}}
+    totals::Dict{Symbol,Dict{Symbol,JacMap{TF}}}
 end
 
 function TotalJacobian(m::SequenceSpaceModel, sources, targets,
@@ -26,10 +28,10 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
     excluded === nothing || (excluded = Set{BlockOrVar}(excluded))
     vars = copy(sources)
     blks = AbstractBlock[]
-    DMat = Dict{Symbol,Matrix{LinearMap{TF}}}
-    parts = Dict{Symbol,DMat}()
-    DMap = Dict{Symbol,LinearMap{TF}}
-    totals = Dict{Symbol,DMap}(u=>DMap() for u in vars)
+    DMat = Dict{Symbol, Matrix{<:LinearMap{TF}}}
+    parts = Dict{Symbol, DMat}()
+    DMap = Dict{Symbol, JacMap{TF}}
+    totals = Dict{Symbol, DMap}(u=>DMap() for u in vars)
     zmap = LinearMap(UniformScaling(zero(TF)), nT)
     for v in m.order
         isblock(m, v) || continue
@@ -48,7 +50,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                 for (r, vo) in enumerate(outputs(blk))
                     # Input/output variable could be an array
                     Ni = length(varvals[vi])
-                    No = outlength(blk, r)
+                    No = outlength(blk, varvals, r)
                     # Make sure r0 is updated even if the iteration is skipped
                     r0 = r0next
                     r0next += No
@@ -57,7 +59,8 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     mj = get(jo, vi, nothing)
                     for ii in 1:Ni
                         for rr in 1:No
-                            j, isz = getjacmap(blk, J, i, ii, r, r0+rr, nT)
+                            # r0 is only used by SimpleBlock
+                            j, isz = getjacmap(blk, J, i, ii, r, rr, r0, nT)
                             isz && continue
                             # Create the array mj only when nonzero map is encountered
                             if mj === nothing
@@ -89,13 +92,6 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     excluded !== nothing && vo in excluded && continue
                     mj = get(parts[vo], vi, nothing)
                     mj === nothing && continue
-                    No, Ni = size(mj)
-                    if Ni == 1 && No == 1
-                        map = mj[1]
-                    else
-                        map = hvcat(((Ni for _ in 1:No)...,),
-                            (mj[rr,ii] for rr in 1:No for ii in 1:Ni)...)
-                    end
                     # Handle the case when vi is a source of the DAG
                     unknown = get(totals, vi, nothing)
                     # If vi is not a source
@@ -105,17 +101,47 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                             maplast = get(d, vi, nothing)
                             if maplast !== nothing
                                 # Maps from multiple temporal terms are already summed in mj
-                                mcomp = map * maplast
-                                # Combine possibly multiple channels
-                                map0 = get(d, vo, nothing)
-                                d[vo] = map0 === nothing ? mcomp : mcomp + map0
+                                if length(mj) == 1
+                                    # maplast shouldn't be a Matrix
+                                    if maplast isa MatOfMap || maplast isa MatMulMap
+                                        mcomp = mapmatmul(mj, maplast)
+                                        # Combine possibly multiple channels
+                                        map0 = get(d, vo, nothing)
+                                        if map0 === nothing
+                                            d[vo] = mcomp
+                                        elseif map0 isa MatMulMap
+                                            d[vo] = mcomp + map0
+                                        else
+                                            d[vo] = mcomp .+ map0
+                                        end
+                                    else
+                                        mcomp = mj[1] * maplast
+                                        map0 = get(d, vo, nothing)
+                                        d[vo] = map0 === nothing ? mcomp : mcomp + map0
+                                    end
+                                else
+                                    mcomp = mapmatmul(mj, maplast)
+                                    map0 = get(d, vo, nothing)
+                                    if map0 === nothing
+                                        d[vo] = mcomp
+                                    elseif map0 isa MatMulMap
+                                        d[vo] = mcomp + map0
+                                    else
+                                        d[vo] = mcomp .+ map0
+                                    end
+                                end
                             end
                         end
                     # If vi is a source
                     else
                         # Combine possibly multiple channels
                         map0 = get(unknown, vo, nothing)
-                        unknown[vo] = map0 === nothing ? map : map + map0
+                        if length(mj) == 1
+                            unknown[vo] = map0 === nothing ? mj[1] : mj[1] + map0
+                        else
+                            # map0 couldn't be a MatMulMap for source
+                            unknown[vo] = map0 === nothing ? mj : mj .+ map0
+                        end
                     end
                 end
             end
@@ -162,11 +188,48 @@ struct GEJacobian{TF<:AbstractFloat, HU<:Union{Matrix{TF},Nothing},
     unknowns::Vector{Symbol}
     H_U::HU
     factor::FAC
-    Gs::Dict{Symbol,Dict{Symbol,Matrix{TF}}}
+    nTfull::Int
+    Gs::Dict{Symbol,Dict{Symbol,JacMap{TF}}}
+    Ms::Dict{Symbol,Dict{Symbol,Matrix{TF}}}
 end
 
+function _filljac!(out::Matrix, tjac::TotalJacobian, vars)
+    nT = tjac.nT
+    vals = tjac.varvals
+    i0, j0 = 0, 0
+    for v in vars
+        tj = tjac.totals[v]
+        N = length(vals[v])
+        for t in tjac.tars
+            M = length(vals[t])
+            if haskey(tj, t)
+                jac = tj[t]
+                if jac isa LinearMap
+                    _unsafe_mul!(view(out, i0+1:i0+nT, j0+1:j0+nT), jac, true)
+                else
+                    for n in 1:N
+                        for m in 1:M
+                            rr = i0+1+(m-1)*nT:i0+m*nT
+                            rc = j0+1+(n-1)*nT:j0+n*nT
+                            _unsafe_mul!(view(out, rr, rc), jac[m,n], true)
+                        end
+                    end
+                end
+            else
+                fill!(view(out, i0+1:i0+M*nT, j0+1:j0+N*nT), zero(eltype(out)))
+            end
+            i0 += M * nT
+        end
+        i0 = 0
+        j0 += N * nT
+    end
+    return out
+end
+
+_getvarlength(vars, vals::NamedTuple) = sum(v->length(vals[v]), vars)
+
 function GEJacobian(tjac::TotalJacobian{TF}, exovars;
-        keepH_U::Bool=false, keepfactor::Bool=false) where TF
+        keepH_U::Bool=false, keepfactor::Bool=false, nTfull::Int=tjac.nT) where TF
     exovars isa Symbol && (exovars = (exovars,))
     isempty(exovars) && throw(ArgumentError("exovars cannot be empty"))
     for var in exovars
@@ -175,34 +238,70 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars;
     exovars = collect(Symbol, exovars)
     unknowns = collect(setdiff(tjac.srcs, exovars))
     nT = tjac.nT
-    nZ = length(exovars)
-    nU = length(unknowns)
-    ntar = length(tjac.tars)
-    zmap = LinearMap(UniformScaling(zero(TF)), nT)
-    H_U = Matrix(hvcat(ntuple(i->nU, ntar),
-        (get(tjac.totals[v], t, zmap) for t in tjac.tars for v in unknowns)...))
-    H_Z = Matrix(hvcat(ntuple(i->nZ, ntar),
-        (get(tjac.totals[v], t, zmap) for t in tjac.tars for v in exovars)...))
+    vals = tjac.varvals
+    Ntar = _getvarlength(tjac.tars, vals)
+    NU = _getvarlength(unknowns, vals)
+    NZ = _getvarlength(exovars, vals)
+    H_U = Matrix{TF}(undef, Ntar*nT, NU*nT)
+    _filljac!(H_U, tjac, unknowns)
+    H_Z = Matrix{TF}(undef, Ntar*nT, NZ*nT)
+    _filljac!(H_Z, tjac, exovars)
     keepH_U && (hu = copy(H_U))
     H_U = lu!(H_U)
     ldiv!(H_U, H_Z)
+
     G_U = H_Z
     G_U .*= -one(eltype(G_U))
-    Gs = Dict{Symbol,Dict{Symbol,Matrix{TF}}}()
+    Gs = Dict{Symbol,Dict{Symbol,JacMap{TF}}}()
+    Ms = Dict{Symbol,Dict{Symbol,Matrix{TF}}}()
     j0 = 0
     for z in exovars
-        Gs[z] = Dict{Symbol,Matrix{TF}}()
-        Nz = length(tjac.varvals[z])
+        Gs[z] = Dict{Symbol,JacMap{TF}}()
+        Ms[z] = Dict{Symbol,Matrix{TF}}()
+        nz = length(tjac.varvals[z])
         i0 = 0
         for u in unknowns
-            Nu = length(tjac.varvals[u])
-            Gs[z][u] = G_U[i0+1:i0+Nu*nT, j0+1:j0+Nz*nT]
-            i0 += Nu*nT
+            nu = length(tjac.varvals[u])
+            if nu > 1 || nz > 1
+                # Determine whether eltype of ms is WrappedMap by the first block
+                # This is required for MatMulMap to work
+                m1 = view(G_U, 1+i0*nT:(i0+1)*nT, 1+j0*nT:(j0+1)*nT)
+                if length(m1) == 1 && nTfull > 1
+                    ms = Matrix{LinearMap{TF}}(undef, nu, nz)
+                    for jj in 1:nz
+                        for ii in 1:nu
+                            rr = 1+(i0+ii-1)*nT:(i0+ii)*nT
+                            rc = 1+(j0+jj-1)*nT:(j0+jj)*nT
+                            m = view(G_U, rr, rc)
+                            ms[ii,jj] = UniformScalingMap(m[1], nTfull)
+                        end
+                    end
+                else
+                    ms = Matrix{WrappedMap{TF}}(undef, nu, nz)
+                    for jj in 1:nz
+                        for ii in 1:nu
+                            rr = 1+(i0+ii-1)*nT:(i0+ii)*nT
+                            rc = 1+(j0+jj-1)*nT:(j0+jj)*nT
+                            m = view(G_U, rr, rc)
+                            ms[ii,jj] = LinearMap(m)
+                        end
+                    end
+                end
+                Gs[z][u] = ms
+            else
+                m = view(G_U, 1+i0*nT:(i0+1)*nT, 1+j0*nT:(j0+1)*nT)
+                if length(m) == 1 && nTfull > 1
+                    Gs[z][u] = UniformScalingMap(m[1], nTfull)
+                else
+                    Gs[z][u] = LinearMap(m)
+                end
+            end
+            i0 += nu
         end
-        j0 += Nz*nT
+        j0 += nz
     end
     return GEJacobian(tjac, exovars, unknowns,
-        keepH_U ? hu : nothing, keepfactor ? H_U : nothing, Gs)
+        keepH_U ? hu : nothing, keepfactor ? H_U : nothing, nTfull, Gs, Ms)
 end
 
 show(io::IO, ::GEJacobian{TF}) where TF = print(io, "GEJacobian{$TF}")
@@ -219,31 +318,79 @@ function show(io::IO, ::MIME"text/plain", j::GEJacobian{TF}) where TF
     join(io, j.tjac.tars, ", ")
 end
 
-function getG!(gejac::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
-    haskey(gejac.Gs, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
-    Gz = gejac.Gs[exovar]
+_resizemap(m::UniformScalingMap, nT) = UniformScalingMap(m.λ, nT)
+_resizemap(m::ShiftMap, nT) = UniformScalingMap(m.S.v[1], nT)
+
+function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
+    haskey(GJ.Gs, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
+    Gz = GJ.Gs[exovar]
     # G is readily available if endovar is a source
     haskey(Gz, endovar) && return Gz[endovar]
     # endovar does not have to be a source but must have been encountered by tjac
-    endovar in gejac.tjac.vars ||
+    endovar in GJ.tjac.vars ||
         throw(ArgumentError("$endovar is not an endogenous variable"))
+    nexo = length(GJ.tjac.varvals[exovar])
+    nendo = length(GJ.tjac.varvals[endovar])
+    nT = GJ.nTfull
+    zmap = LinearMap(UniformScaling(zero(TF)), nT)
+    if nendo > 1 || nexo > 1
+        M = Matrix{LinearMap{TF}}(undef, nendo, nexo)
+        fill!(M, zmap)
+    else
+        M = zmap
+    end
     # M_U combines all indirect effects while M_u is for a specific channel
-    M = LinearMap(UniformScaling(zero(TF)), gejac.tjac.nT)
-    for (src, ms) in gejac.tjac.totals
+    for (src, ms) in GJ.tjac.totals
         # Direct effect of exovar M_Z
         if src === exovar
             if haskey(ms, endovar)
-                M += ms[endovar]
+                m = ms[endovar]
+                if m isa LinearMap
+                    size(m) == (1,1) && !(m isa MatMulMap) && (m = _resizemap(m, nT))
+                    M += m
+                else
+                    if size(m[1,1]) == (1,1)
+                        size(M) == size(m) || throw(DimensionMismatch())
+                        for i in eachindex(M)
+                            M[i] += _resizemap(m[i], nT)
+                        end
+                    else
+                        M .+= m
+                    end
+                end
             end
         # Indirect effect via unknowns M_U
-        elseif src in gejac.unknowns
-            if haskey(ms, endovar) 
+        elseif src in GJ.unknowns
+            if haskey(ms, endovar)
                 M_u = ms[endovar]
-                M += M_u * Gz[src]
+                if M_u isa LinearMap
+                    if M_u isa MatMulMap
+                        M += mapmatmul(M_u, Gz[src])
+                    else
+                        size(M_u) == (1,1) && (M_u = _resizemap(M_u, nT))
+                        if Gz[src] isa MatMulMap
+                            M += mapmatmul(M_u, Gz[src])
+                        else
+                            M += M_u * Gz[src]
+                        end
+                    end
+                else
+                    size(M_u[1,1]) == (1,1) && (M_u = _resizemap.(M_u, nT))
+                    M += mapmatmul(M_u, Gz[src])
+                end
             end
         end
     end
-    G = Matrix(M)
-    Gz[endovar] = G
-    return G
+    Gz[endovar] = M
+    return M
+end
+
+function getM!(GJ::GEJacobian, exovar::Symbol, endovar::Symbol)
+    haskey(GJ.Ms, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
+    Mz = GJ.Ms[exovar]
+    haskey(Mz, endovar) && return Mz[endovar]
+    G = getG!(GJ, exovar, endovar)
+    M = Matrix(G)
+    Mz[endovar] = M
+    return M
 end

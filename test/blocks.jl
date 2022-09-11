@@ -30,6 +30,8 @@
 
     bfirm, bhh, bmkt = rbcblocks()
     varvals = (K=2, L=1, w=1, eis=1, frisch=1, φ=0.9, δ=0.025)
+    @test outlength(bfirm, varvals) == 3
+    @test outlength(bfirm, varvals, 1) == 1
     varvals = steadystate!(bhh, varvals)
     @test varvals[:C] ≈ 1.1111111111111112
     @test varvals[:I] ≈ 0.05
@@ -52,10 +54,10 @@ end
     b = kshhblock(0, 200, 500, 0.966, 0.5, 7)
     @test inputs(b) === ins
     @test outputs(b) === outs
-    @test !hascache(b)
-    @test outlength(b) == 2
 
     varvals = (r=0.01, w=0.89, β=0.98, eis=1)
+    @test outlength(b, varvals) == 2
+    @test outlength(b, varvals, 1) == 1
     varvals = steadystate!(b, varvals)
     # Compare results with original Python package
     a = b.ha.a
@@ -141,9 +143,9 @@ end
     @test invars(b) == ins
     @test ssinputs(b) == Set(ins)
     @test outputs(b) == (:pip,)
-    @test !hascache(b)
-    @test outlength(b) == 1
-    @test outlength(b, 1) == 1
+    varvals0 = NamedTuple() # Not the actual varvals used by CombinedBlock
+    @test outlength(b, varvals0) == 1
+    @test outlength(b, varvals0, 1) == 1
     @test model(b) === mpricing
     varvals = getvarvals(sspricing)
     steadystate!(b, varvals)
@@ -152,17 +154,17 @@ end
 
     # Compare results with original Python package
     J = jacobian(b, 3, varvals)
-    @test all(isapprox.(J.Gs[:κp][:pip], 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:κp][:pip].lmap, 0, atol=1e-8))
     Jmc = [0.1 0.09876543 0.09754611;
            0   0.1        0.09876543;
            0   0          0.1        ]
-    @test J.Gs[:mc][:pip] ≈ Jmc atol=1e-8
+    @test J.Gs[:mc][:pip].lmap ≈ Jmc atol=1e-8
     Jmup = [0.0970225 0.09582469 0.09464167;
             0         0.0970225  0.09582469;
             0         0          0.0970225  ]
-    @test J.Gs[:mup][:pip] ≈ Jmup atol=1e-8
-    @test all(isapprox.(J.Gs[:Y][:pip], 0, atol=1e-8))
-    @test all(isapprox.(J.Gs[:r][:pip], 0, atol=1e-8))
+    @test J.Gs[:mup][:pip].lmap ≈ Jmup atol=1e-8
+    @test all(isapprox.(J.Gs[:Y][:pip].lmap, 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:r][:pip].lmap, 0, atol=1e-8))
 
     ins0 = (:p, :div, :r, lead(:div), lead(:p), lead(:r))
     outs = :p
@@ -178,11 +180,11 @@ end
     Jdiv = [0 0.98765432 0.97546106;
             0 0          0.98765432;
             0 0          0          ]
-    @test J.Gs[:div][:p] ≈ Jdiv atol=1e-8
+    @test J.Gs[:div][:p].lmap ≈ Jdiv atol=1e-8
     Jr = [0 -11.0617284 -10.92516385;
           0 0           -11.0617284;
           0 0           0            ]
-    @test J.Gs[:r][:p] ≈ Jr atol=1e-8
+    @test J.Gs[:r][:p].lmap ≈ Jr atol=1e-8
 
     blabor = block(ta.labor, (:Y, :w, :K, :Z, :α, lag(:K)), (:N, :mc))
     ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lag(:K), lead(:K), lead(:N), lead(:Q), lead(:Z), lead(:mc), lead(:r)]
@@ -200,11 +202,11 @@ end
     Jyk = [0 0.03789632 0.03714605;
            0 0.03761037 0.07490055;
            0 0.03746678 0.0746146  ]
-    @test J.Gs[:Y][:K] ≈ Jyk atol=1e-8
+    @test J.Gs[:Y][:K].lmap ≈ Jyk atol=1e-8
     Jrq = [0 -0.97663311 -0.95729755;
            0 0.00736934  -0.97297837;
            0 0.00370042   0.00736934 ]
-    @test J.Gs[:r][:Q] ≈ Jrq atol=1e-8
+    @test J.Gs[:r][:Q].lmap ≈ Jrq atol=1e-8
 
     @test sprint(show, b) == "CombinedBlock(GSL_Hybrids)"
     @test sprint(show, MIME("text/plain"), b) == """
@@ -215,7 +217,7 @@ end
 
 @testset "SolvedBlock" begin
     using SequenceJacobians: TwoAsset as ta
-    b = ta.pricing_block()
+    b = ta.pricing_blk()
     varvals = steadystate!(b, getvarvals(b.ss))
     J = jacobian(b, 3, varvals)
     bj = block(b, J)
@@ -223,9 +225,8 @@ end
     @test invars(bj) == invars(b)
     @test ssinputs(bj) == ssinputs(b)
     @test outputs(bj) == outputs(b)
-    @test hascache(bj) == hascache(b)
-    @test outlength(bj) == outlength(b)
-    @test outlength(bj, 1) == outlength(b, 1)
+    @test outlength(bj, varvals) == outlength(b, varvals)
+    @test outlength(bj, varvals, 1) == outlength(b, varvals, 1)
 
     @test_throws ErrorException steadystate!(bj, varvals)
     @test jacbyinput(bj) == false

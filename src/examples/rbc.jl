@@ -24,6 +24,6 @@ end
     return goods_mkt, euler, walras
 end
 
-rbcblocks() = (firm_block(), household_block(), mkt_clearing_block())
+rbcblocks() = (firm_blk(), household_blk(), mkt_clearing_blk())
 
 end

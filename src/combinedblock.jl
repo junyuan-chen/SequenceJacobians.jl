@@ -8,10 +8,11 @@ struct CombinedBlock{NJ, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{in
     jacus::NTuple{NJ,Symbol}
     jactars::NTuple{NJ,Symbol}
     jacargs::Dict{Symbol,Any}
+    static::Bool
     function CombinedBlock(ins::NTuple{NI,Symbol}, ssins::Set{Symbol},
             outs::NTuple{NO,Symbol}, ss::SS, solver, ssargs::Dict{Symbol,Any},
             jacus::NTuple{NJ,Symbol}, jactars::NTuple{NJ,Symbol},
-            jacargs::Dict{Symbol,Any}) where {NI,NO,SS<:SteadyState,NJ}
+            jacargs::Dict{Symbol,Any}, static::Bool) where {NI,NO,SS<:SteadyState,NJ}
         if isrootsolver(solver)
             ST = solver isa Type ? solver : typeof(solver)
             sscache = rootsolvercache(ST, ss; ssargs...)
@@ -56,15 +57,16 @@ struct CombinedBlock{NJ, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{in
             hastarget(ss, v) || throw(ArgumentError("$v is not a target for steady state"))
             v in jacus && throw(ArgumentError("Jacobian unknowns and targets cannot overlap"))
         end
+        # If static==true, inputs should not involve temporal terms but this is not verified
         return new{NJ,ST,SS,typeof(sscache),ins,outs}(
-            ssins, ss, sscache, ssargs, jacus, jactars, jacargs)
+            ssins, ss, sscache, ssargs, jacus, jactars, jacargs, static)
     end
 end
 
 # Allow irrelevant kwargs for @implicit
 function block(ss::SteadyState, ins, outs;
         solver=NoRootSolver, ssins=ins, ssargs=nothing,
-        jacus=inputs(ss), jactars=targets(ss), jacargs=nothing, kwargs...)
+        jacus=inputs(ss), jactars=targets(ss), jacargs=nothing, static=false, kwargs...)
     ins = ins isa Union{Symbol,VarSpec} ? (ins,) : (ins...,)
     outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
@@ -75,17 +77,18 @@ function block(ss::SteadyState, ins, outs;
     jactars = jactars isa Symbol ? (jactars,) : (jactars...,)
     ssargs = ssargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(ssargs...)
     jacargs = jacargs === nothing ? Dict{Symbol,Any}() : Dict{Symbol,Any}(jacargs...)
-    return CombinedBlock(ins, ssins, outs, ss, solver, ssargs, jacus, jactars, jacargs)
+    return CombinedBlock(ins, ssins, outs, ss, solver, ssargs, jacus, jactars, jacargs,
+        static)
 end
 
 function block(bs::Union{AbstractBlock,Vector{<:AbstractBlock}}, ins, outs,
         calibrated::ValidVarInput, initials::Union{ValidVarInput,Nothing}=nothing,
         tars::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64;
-        jacus=nothing, jactars=nothing, kwargs...)
+        jacus=nothing, jactars=nothing, static=false, kwargs...)
     ss = SteadyState(model(bs), calibrated, initials, tars, TF)
     jacus === nothing && (jacus = inputs(ss))
     jactars === nothing && (jactars = targets(ss))
-    return block(ss, ins, outs; jacus=jacus, jactars=jactars, kwargs...)
+    return block(ss, ins, outs; jacus=jacus, jactars=jactars, static=static, kwargs...)
 end
 
 invars(b::CombinedBlock) = inputs(b)
@@ -93,8 +96,12 @@ invars(b::CombinedBlock) = inputs(b)
 hasjactars(::CombinedBlock{NJ}) where NJ = NJ > 0
 solvertype(::CombinedBlock{NJ,ST}) where {NJ,ST} = ST
 
-outlength(b::CombinedBlock) = sum(vo->length(getvarvals(b.ss)[vo]), outputs(b))
-outlength(b::CombinedBlock, r::Int) = length(getvarvals(b.ss)[outputs(b)[r]])
+# Use varvals attached to b.ss instead
+outlength(b::CombinedBlock, varvals::NamedTuple) =
+    sum(vo->length(getvarvals(b.ss)[vo]), outputs(b))
+outlength(b::CombinedBlock, varvals::NamedTuple, r::Int) =
+    length(getvarvals(b.ss)[outputs(b)[r]])
+
 model(b::CombinedBlock) = model(b.ss)
 
 function steadystate!(b::CombinedBlock, varvals::NamedTuple)
@@ -111,18 +118,21 @@ function jacobian(b::CombinedBlock, nT::Int, varvals::NamedTuple)
     outs = outputs(b)
     sources = (ins..., b.jacus...)
     excluded = get(b.jacargs, :excluded, nothing)
+    # Set nT = 1 and avoid WrappedMap for static problems
+    nTfull = nT
+    b.static && (nT = 1)
     # varvals from the argument may not contain internal variabls of b
-    tjac = TotalJacobian(model(b.ss), sources, b.jactars, getvarvals(b.ss), nT;
+    J = TotalJacobian(model(b.ss), sources, b.jactars, getvarvals(b.ss), nT;
         excluded=excluded)
     keepH_U = get(b.jacargs, :keepH_U, false)::Bool
     keepfactor = get(b.jacargs, :keepfactor, false)::Bool
-    gejac = GEJacobian(tjac, ins; keepH_U=keepH_U, keepfactor=keepfactor)
+    GJ = GEJacobian(J, ins; keepH_U=keepH_U, keepfactor=keepfactor, nTfull=nTfull)
     for vi in ins
         for vo in outs
-            getG!(gejac, vi, vo)
+            getG!(GJ, vi, vo)
         end
     end
-    return gejac
+    return GJ
 end
 
 function jacobian(b::CombinedBlock{0}, nT::Int, varvals::NamedTuple)
@@ -131,13 +141,23 @@ function jacobian(b::CombinedBlock{0}, nT::Int, varvals::NamedTuple)
         excluded=excluded)
 end
 
-function getjacmap(b::CombinedBlock, J::GEJacobian, i::Int, ii::Int, r::Int, rr::Int, nT::Int)
+function getjacmap(b::CombinedBlock, J::GEJacobian, i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
     vi = inputs(b)[i]
     vo = outputs(b)[r]
     if hasjactars(b)
-        return LinearMap(J.Gs[vi][vo]), false
+        jmap = J.Gs[vi][vo]
+        if jmap isa Matrix
+            return jmap[rr,ii], false
+        else
+            return jmap, false
+        end
     else
-        return J.totals[vi][vo], false
+        jmap = J.totals[vi][vo]
+        if jmap isa Matrix
+            return jmap[rr,ii], false
+        else
+            return jmap, false
+        end
     end
 end
 

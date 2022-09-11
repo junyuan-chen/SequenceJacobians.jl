@@ -46,7 +46,7 @@
               endogenous: K, L
               targets:    euler, goods_mkt"""
 
-        G = getG!(GJ, :Z, :C)
+        G = Matrix(getG!(GJ, :Z, :C))
         # Compare results with original Python package
         @test G[1,1] ≈ 0.15969857749115557 atol=1e-7
         @test G[2,1] ≈ 0.14155046602609384 atol=1e-7
@@ -63,13 +63,13 @@
         solve!(GSL_Hybrids, ss, xtol=1e-10)
         J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
         GJ = GEJacobian(J, :Z, keepH_U=true)
-        G = getG!(GJ, :Z, :C)
+        G = getM!(GJ, :Z, :C)
         # Compare results with original Python package
         # Need to specify twosided=True in the Python package
         @test G[1,1:3] ≈ [2.10710661e-1, 6.58615809e-2, 5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [3.71126268e-2, 4.08907393e-2, 1.44162837e-1] atol=1e-6
 
-        G = getG!(GJ, :Z, :K)
+        G = getM!(GJ, :Z, :K)
         @test G[1,1:3] ≈ [9.23531301e-1, -6.58615809e-2, -5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [7.63355815e-1,  8.39331787e-1,  9.22957992e-1] atol=1e-5
     end

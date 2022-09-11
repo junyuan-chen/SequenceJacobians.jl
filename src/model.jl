@@ -189,14 +189,16 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
         targets::Union{ValidVarInput,Nothing}=nothing, TF::Type=Float64)
     calibrated isa Pair && (calibrated = (calibrated,))
     initials !== nothing && initials isa Pair && (initials = (initials,))
+    initials === nothing && (initials = ())
     targets !== nothing && targets isa Pair && (targets = (targets,))
+    targets === nothing && (targets = ())
     calibrated = Dict{Symbol,Any}(calibrated...)
     targets = Dict{Symbol,Any}(targets...)
     vars = Symbol[v for v in m.pool if v isa Symbol]
     varvals = NamedTuple()
     # Assign initials to varvals helps look up assigned values when filling inits
     # This is also the way to tell whether any unknown variable is an Array
-    if initials !== nothing
+    if !isempty(initials)
         for (k, v) in initials
             if v isa Real
                 v = convert(TF, v)
@@ -211,11 +213,11 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
         _collapse!(m, calibrated, targets, varvals)
 
     inlength = length(scins)
-    isempty(arins) || (inlength += last(arins).stop)
+    isempty(arins) || (inlength += sum(x->length(varvals[x]), arins))
 
     inits = Vector{TF}(undef, inlength)
     arinrange = Vector{UnitRange{Int}}(undef, length(arins))
-    if initials !== nothing
+    if !isempty(initials)
         i0 = 0
         @inbounds for vi in scins
             i0 += 1
@@ -233,7 +235,7 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
     end
 
     tarlength = length(sctars)
-    isempty(artars) || (tarlength += last(artars).stop)
+    isempty(artars) || (tarlength += sum(x->length(targets[x]), artars))
     tarlength == inlength || @warn "$inlength inputs for $tarlength targets"
 
     tars = Vector{TF}(undef, tarlength)
@@ -245,12 +247,12 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
             val = targets[vt]
             tars[i0] = val
         end
-        for vt in artars
+        for (iartar, vt) in enumerate(artars)
             val = targets[vt]
             w = length(val)
             r = i0+1:i0+w
             copyto!(view(tars, r), view(val, :))
-            artarrange[iarin] = r
+            artarrange[iartar] = r
             i0 += w
         end
     end

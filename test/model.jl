@@ -3,6 +3,7 @@
     m = model(rbcblocks())
 
     @test SimpleDiGraph(m) === m.dag
+    @test edgetype(m) == edgetype(m.dag)
     @test eltype(m) == Int
     @test nv(m) == 20
     @test ne(m) == 29
@@ -105,7 +106,7 @@ end
             # Compare results with original Python package
             @test getval(ss, :β) ≈ 0.981952788061795 atol=1e-8
             @test getval(ss, :Z) ≈ 0.8816460975214567 atol=1e-8
-            @test getval(ss, :K) ≈ 3.142857142857143 atol=1e-8
+            @test getval(ss, :K) ≈ 3.142857142857143 atol=1e-7
             Main.forwardsolver(::KSHousehold) = nothing
         end
     end

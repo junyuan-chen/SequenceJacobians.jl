@@ -1,5 +1,3 @@
-const ValidCache = Union{Dict{Symbol},Nothing}
-
 struct VarSpec
     name::Symbol
     shift::Int
@@ -28,17 +26,12 @@ invars(b::AbstractBlock) = getfield(b, :invars)
 ssinputs(b::AbstractBlock) = getfield(b, :ssins)
 outputs(::AbstractBlock{ins,outs}) where {ins,outs} = outs
 
-_countcache(cache::ValidCache, outs) =
-    sum(k->haskey(cache, k) ? length(cache[k])::Int : 1, outs)
+outlength(b::AbstractBlock, varvals::NamedTuple) =
+    sum(k->haskey(varvals, k) ? length(varvals[k])::Int : 1, outputs(b))
 
-hascache(b::AbstractBlock) = hasfield(typeof(b), :cache)
-outlength(b::AbstractBlock) =
-    hascache(b) ? _countcache(b.cache, outputs(b)) : length(outputs(b))
-
-function outlength(b::AbstractBlock, r::Int)
-    hascache(b) || return 1
+function outlength(b::AbstractBlock, varvals::NamedTuple, r::Int)
     vo = outputs(b)[r]
-    return haskey(b.cache, vo) ? length(b.cache[vo])::Int : 1
+    return haskey(varvals, vo) ? length(varvals[vo])::Int : 1
 end
 
 function _checkinsouts(ins, outs, ssins)
@@ -49,15 +42,14 @@ function _checkinsouts(ins, outs, ssins)
         throw(ArgumentError("an input cannot be the output of the same block"))
 end
 
-struct SimpleBlock{CA<:ValidCache,F<:Function,ins,outs,NI} <: AbstractBlock{ins,outs}
+struct SimpleBlock{F<:Function,ins,outs,NI} <: AbstractBlock{ins,outs}
     invars::NTuple{NI,VarSpec}
     ssins::Set{Symbol}
-    cache::CA
     f::F
     function SimpleBlock(ins::NTuple{NI,Symbol}, invars::NTuple{NI,VarSpec},
-            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, cache::CA, f::F) where {NI,NO,CA,F}
+            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, f::F) where {NI,NO,F}
         _checkinsouts(ins, outs, ssins)
-        return new{CA,F,ins,outs,NI}(invars, ssins, cache, f)
+        return new{F,ins,outs,NI}(invars, ssins, f)
     end
 end
 
@@ -74,15 +66,11 @@ function _inout(ins, outs, ssins)
 end
 
 # Allow irrelevant kwargs for @implicit
-block(f::Function, ins, outs; ssins=ins, cache=nothing, kwargs...) =
-    SimpleBlock(_inout(ins, outs, ssins)..., cache, f)
-
-hascache(b::SimpleBlock{Nothing}) = false
-outlength(b::SimpleBlock{Nothing}) = length(outputs(b))
-outlength(b::SimpleBlock{Nothing}, r::Int) = 1
+block(f::Function, ins, outs; ssins=ins, kwargs...) =
+    SimpleBlock(_inout(ins, outs, ssins)..., f)
 
 function (b::SimpleBlock)(x...)
-    out = hascache(b) ? b.f(b.cache, x...) : b.f(x...)
+    out = b.f(x...)
     out = out isa Tuple ? out : (out,)
     return NamedTuple{outputs(b)}(out)
 end
@@ -94,25 +82,35 @@ end
 
 jacbyinput(::SimpleBlock) = true
 
-function jacobian(b::SimpleBlock, ::Val{i}, nT::Int, varvals::NamedTuple,
-        TF::Type=Float64) where i
+function f_partial!(b::SimpleBlock, varvals, fx, x, ::Val{i}) where i
     ins = inputs(b)
-    vi = ins[i]
-    val = varvals[vi]
-    f(x) = collect(Iterators.flatten(b.f(map(k->getfield(varvals, k), ins[1:i-1])..., x,
-        map(k->getfield(varvals, k), ins[i+1:length(ins)])...)))
-    no = outlength(b)
-    J = Matrix{TF}(undef, no, length(val))
-    if val isa Real
-        return ForwardDiff.derivative!(J, f, val)
-    else
-        return ForwardDiff.jacobian!(J, f, vec(val))
+    r = b.f(map(k->getfield(varvals, k), ins[1:i-1])..., x,
+        map(k->getfield(varvals, k), ins[i+1:length(ins)])...)
+    for (k, v) in enumerate(Iterators.flatten(r))
+        fx[k] = v
     end
+    return fx
 end
 
-function getjacmap(b::SimpleBlock{Nothing}, J::Matrix,
-        i::Int, ii::Int, r::Int, rr::Int, nT::Int)
-    j = J[rr,ii]
+function jacobian(b::SimpleBlock, Vi::Val{i}, nT::Int, varvals::NamedTuple,
+        TF::Type=Float64) where i
+    ins = inputs(b)
+    val = varvals[ins[i]]
+    # Array variables should have existed in varvals
+    no = outlength(b, varvals)
+    J = Matrix{TF}(undef, no, length(val))
+    f!(fx, x) = f_partial!(b, varvals, fx, x, Vi)
+    if val isa Real
+        finite_difference_gradient!(J, f!, convert(TF,val))
+    else
+        finite_difference_jacobian!(J, f!, view(val,:))
+    end
+    return J
+end
+
+function getjacmap(b::SimpleBlock, J::Matrix,
+        i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
+    j = J[r0+rr,ii]
     return ShiftMap(Shift(shift(invars(b)[i]), j), nT), iszero(j)
 end
 
@@ -140,7 +138,7 @@ function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
 end
 
 function show(io::IO, b::SimpleBlock)
-    fname = String(typeof(b).parameters[2].name.name)[2:end]
+    fname = String(typeof(b).parameters[1].name.name)[2:end]
     print(io, "SimpleBlock($fname)")
 end
 
@@ -152,8 +150,7 @@ function _showinouts(io::IO, b::AbstractBlock)
 end
 
 function show(io::IO, ::MIME"text/plain", b::SimpleBlock)
-    fname = String(typeof(b).parameters[2].name.name)[2:end]
-    print(io, "SimpleBlock($fname)")
-    println(io, hascache(b) ? " with cache:" : ":")
+    fname = String(typeof(b).parameters[1].name.name)[2:end]
+    println(io, "SimpleBlock($fname):")
     _showinouts(io, b)
 end

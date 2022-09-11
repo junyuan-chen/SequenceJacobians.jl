@@ -1,7 +1,11 @@
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 CodecZlib = "944b1d66-785c-5afd-91f1-9de20f533193"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+MAT = "23992714-dd62-5051-b70f-ba57cb901cac"
 
 [compat]
 CSV = "0.10"
 CodecZlib = "0.7"
+JSON3 = "1"
+MAT = "0.10"

@@ -13,15 +13,14 @@ end
 
 block(b::SimpleBlock, Js::Dict{Int,<:Matrix}) = SolvedBlock(b, Js)
 block(b::HetBlock, ca::HetAgentJacCache) = SolvedBlock(b, ca)
-block(b::CombinedBlock, gejac::GEJacobian) = SolvedBlock(b, gejac)
-block(b::CombinedBlock{0}, tjac::TotalJacobian) = SolvedBlock(b, tjac)
+block(b::CombinedBlock, GJ::GEJacobian) = SolvedBlock(b, GJ)
+block(b::CombinedBlock{0}, J::TotalJacobian) = SolvedBlock(b, J)
 
 invars(b::SolvedBlock) = invars(b.blk)
 ssinputs(b::SolvedBlock) = ssinputs(b.blk)
 
-hascache(b::SolvedBlock) = hascache(b.blk)
-outlength(b::SolvedBlock) = outlength(b.blk)
-outlength(b::SolvedBlock, r::Int) = outlength(b.blk, r)
+outlength(b::SolvedBlock, varvals::NamedTuple) = outlength(b.blk, varvals)
+outlength(b::SolvedBlock, varvals::NamedTuple, r::Int) = outlength(b.blk, varvals, r)
 
 steadystate!(b::SolvedBlock, varvals::NamedTuple) =
     error("SolvedBlock is not allowed for solving the steady state")
@@ -33,8 +32,8 @@ jacobian(b::SolvedBlock{<:SimpleBlock}, ::Val{i}, nT::Int, varvals::NamedTuple) 
     b.jac[i]
 
 _getnT(ca::HetAgentJacCache) = ca.nT
-_getnT(gejac::GEJacobian) = gejac.tjac.nT
-_getnT(tjac::TotalJacobian) = tjac.nT
+_getnT(GJ::GEJacobian) = GJ.tjac.nT
+_getnT(J::TotalJacobian) = J.nT
 
 function jacobian(b::SolvedBlock, nT::Int, varvals::NamedTuple) where TF
     jacnT = _getnT(b.jac)
@@ -42,8 +41,8 @@ function jacobian(b::SolvedBlock, nT::Int, varvals::NamedTuple) where TF
     return b.jac
 end
 
-getjacmap(b::SolvedBlock, J, i::Int, ii::Int, r::Int, rr::Int, nT::Int) =
-    getjacmap(b.blk, J, i, ii, r, rr, nT)
+getjacmap(b::SolvedBlock, J, i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int) =
+    getjacmap(b.blk, J, i, ii, r, rr, r0, nT)
 
 show(io::IO, b::SolvedBlock) = print(io, "SolvedBlock($(b.blk))")
 

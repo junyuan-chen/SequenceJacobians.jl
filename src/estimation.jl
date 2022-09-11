@@ -61,6 +61,72 @@ function autocov!(V::AbstractMatrix{TF}, r::AbstractArray{TF,3},
     return V
 end
 
+function _simul_shock!(dY::AbstractVecOrMat, dX::AbstractVecOrMat, ε::AbstractVecOrMat, nT::Int)
+    T = min(length(dY), size(ε,1)-nT+1)
+    Nout = size(dY, 2)
+    for n in 1:Nout
+        for t in 1:T
+            # The order of ε is flipped
+            dY[t,n] = dot(view(dX,1+(n-1)*nT:n*nT,:), view(ε,t+nT-1:-1:t,:))
+        end
+    end
+    return dY
+end
+
+_addssval!(out::VecOrMat, v::Real, T::Int) = (out .+= v)
+
+function _addssval!(out::VecOrMat, vs::AbstractArray, T::Int)
+    for (n, v) in enumerate(vs)
+        for t in 1:T
+            out[t,n] += v
+        end
+    end
+end
+
+function simulate!(out::AbstractVecOrMat, GJ::GEJacobian, exovar::Symbol, endovar::Symbol,
+        ε::AbstractVector, ρ::Real, σ::Real=1.0; addssval::Bool=true)
+    nT = GJ.nTfull
+    G = getM!(GJ, exovar, endovar)
+    dX = G * (σ .* ρ.^(0:nT-1))
+    _simul_shock!(out, dX, ε, nT)
+    if addssval
+        T = min(length(out), size(ε,1)-nT+1)
+        _addssval!(out, GJ.tjac.varvals[endovar], T)
+    end
+    return out
+end
+
+function simulate!(out::AbstractVecOrMat, GJ::GEJacobian, exovar::Symbol, endovar::Symbol,
+        ε::AbstractMatrix, ρ::AbstractVector{<:Real},
+        σ::Union{AbstractVector{<:Real},Real}; addssval::Bool=true)
+    nT = GJ.nTfull
+    G = getM!(GJ, exovar, endovar)
+    N = size(ε, 2)
+    dX = Matrix{eltype(G)}(undef, size(G,1), N)
+    for n in 1:N
+        Gn = view(G,:,1+(n-1)*nT:n*nT)
+        σn = σ isa Real ? σ : σ[n]
+        mul!(view(dX,:,n), Gn, (σn .* ρ[n].^(0:nT-1)))
+    end
+    _simul_shock!(out, dX, ε, nT)
+    if addssval
+        T = min(length(out), size(ε,1)-nT+1)
+        _addssval!(out, GJ.tjac.varvals[endovar], T)
+    end
+    return out
+end
+
+function simulate(GJ::GEJacobian{T1}, exovar::Symbol, endovar::Symbol,
+        ε::AbstractVecOrMat{T2}, ρ, σ=1.0; kwargs...) where {T1,T2}
+    G = getG!(GJ, exovar, endovar)
+    nout = G isa Matrix || G isa MatMulMap ? size(G,1) : 1
+    T = size(ε,1) - GJ.nTfull + 1
+    T < 1 && throw(ArgumentError("length of shocks is smaller than $(GJ.nTfull)"))
+    out = Matrix{promote_type(T1,T2)}(undef, T, nout)
+    simulate!(out, GJ, exovar, endovar, ε, ρ, σ; kwargs...)
+    return out
+end
+
 function loglikelihood!(Y::Vector, Y1::Vector, V::Matrix)
     chol = cholesky!(V)
     D = sum(log, view(chol.factors, diagind(V)))

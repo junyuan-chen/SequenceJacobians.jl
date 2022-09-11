@@ -2,8 +2,12 @@ using Test
 using SequenceJacobians
 
 using Base: has_offset_axes
+using CodecZlib: GzipDecompressorStream
 using GSL
+using JSON3
 using LinearAlgebra
+using LinearMaps
+using LinearMaps: UniformScalingMap, WrappedMap
 using LoopVectorization
 using NLsolve
 using Roots: Brent, Secant
@@ -15,9 +19,15 @@ if VERSION >= v"1.7"
     using OpenBLAS32_jll
 end
 
+function loadjson(name::String)
+    stream = open(pkgdir(SequenceJacobians)*"/data/$name.json.gz") |> GzipDecompressorStream
+    return copy(JSON3.read(read(stream, String)))
+end
+
 const tests = [
     "utils",
     "shift",
+    "mapmatmul",
     "solvers",
     "lawofmotion",
     "blocks",
@@ -25,6 +35,7 @@ const tests = [
     "jacobian",
     "irf",
     "twoasset",
+    "Horvath",
     "estimation"
 ]
 

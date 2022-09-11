@@ -81,7 +81,7 @@ macro simple(args...)
     isempty(outs) && error("explicit return statement is not found")
     # If multiple return statements exist, only consider the first one found
     outs = _parseouts(outs[1][1])
-    blkf = Symbol(f, :_block)
+    blkf = Symbol(f, :_blk)
     return quote
         function $(esc(f))($(map(esc, fargs)...))
             $(esc(body))
@@ -211,7 +211,7 @@ macro implicit(args...)
     _, outs, outquote, tars, tarquote, solver = parsedrets[1]
     calis, inits = _parsevals(vals, outs)
     inquote = _parseins(ntuple(i->calis[i][1], length(calis)))
-    blkf = Symbol(f, :_block)
+    blkf = Symbol(f, :_blk)
     return quote
         function $(esc(f))($(map(esc, fargs)...))
             $(esc(body))

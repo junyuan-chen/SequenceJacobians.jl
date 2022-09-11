@@ -19,3 +19,19 @@
     @test transpose(S2) == Shift((-2,1)=>0)
 end
 
+@testset "ShiftMap" begin
+    S = ShiftMap(Shift((1,0)=>1.0), 4)
+    U = LinearMap(2.0*I, 4)
+
+    @test S + U isa ShiftMap
+    @test U + S isa ShiftMap
+    @test S + S isa ShiftMap
+
+    @test S * U isa ShiftMap
+    @test U * S isa ShiftMap
+    @test S * S isa ShiftMap
+
+    @test U + U isa UniformScalingMap
+    @test U * U isa UniformScalingMap
+    @test zero(S) == LinearMap(0.0*I, 4)
+end

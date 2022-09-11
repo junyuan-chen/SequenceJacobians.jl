@@ -1,6 +1,6 @@
 # Methods for linirf
-function _transform!(d::Dict, trans::Vector{Symbol}, gejac::GEJacobian)
-    varvals = gejac.tjac.varvals
+function _transform!(d::Dict, trans::Vector{Symbol}, GJ::GEJacobian)
+    varvals = GJ.tjac.varvals
     for irfs in values(d)
         for v in trans
             irf = get(irfs, v, nothing)
@@ -12,9 +12,9 @@ function _transform!(d::Dict, trans::Vector{Symbol}, gejac::GEJacobian)
     end
 end
 
-function _transform!(d::Dict, trans::Bool, gejac::GEJacobian)
+function _transform!(d::Dict, trans::Bool, GJ::GEJacobian)
     if trans
-        varvals = gejac.tjac.varvals
+        varvals = GJ.tjac.varvals
         for irfs in values(d)
             for (v, irf) in irfs
                 ss = varvals[v]
@@ -24,12 +24,12 @@ function _transform!(d::Dict, trans::Bool, gejac::GEJacobian)
     end
 end
 
-function linirf(gejac::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing;
+function linirf(GJ::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing;
         transform=false) where TF
-    tjac = gejac.tjac
+    tjac = GJ.tjac
     dshocks isa Pair && (dshocks = (dshocks,))
     endovars isa Symbol && (endovars = (endovars,))
-    endovars === nothing && (endovars = setdiff(tjac.vars, gejac.exovars, tjac.tars))
+    endovars === nothing && (endovars = setdiff(tjac.vars, GJ.exovars, tjac.tars))
     isempty(endovars) && throw(ArgumentError("endovars cannot be empty"))
     nT = tjac.nT
     out = Dict{Symbol,Dict{Symbol,VecOrMat{TF}}}()
@@ -38,11 +38,11 @@ function linirf(gejac::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing
         d = Dict{Symbol,VecOrMat{TF}}()
         out[exo] = d
         for endo in endovars
-            G = getG!(gejac, exo, endo)
+            G = getG!(GJ, exo, endo)
             d[endo] = G * dZ
         end
     end
-    _transform!(out, transform, gejac)
+    _transform!(out, transform, GJ)
     return out
 end
 
@@ -50,9 +50,9 @@ function linirf(tjac::TotalJacobian, dshocks::ValidPathInput, endovars=nothing;
         transform=false, keepH_U::Bool=false)
     dshocks isa Pair && (dshocks = (dshocks,))
     exovars = (exo for (exo, _) in dshocks)
-    gejac = GEJacobian(tjac, exovars; keepH_U=keepH_U)
-    irfs = linirf(gejac, dshocks isa Tuple ? dshocks[1] : dshocks, endovars; transform=transform)
-    return irfs, gejac
+    GJ = GEJacobian(tjac, exovars; keepH_U=keepH_U)
+    irfs = linirf(GJ, dshocks isa Tuple ? dshocks[1] : dshocks, endovars; transform=transform)
+    return irfs, GJ
 end
 
 # Methods for nlirf

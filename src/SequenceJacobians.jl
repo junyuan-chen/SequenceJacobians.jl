@@ -2,12 +2,12 @@ module SequenceJacobians
 
 using Base: RefValue
 using FFTW: rfft, irfft
-using FiniteDiff: finite_difference_gradient!, GradientCache, default_relstep
-using ForwardDiff
+using FiniteDiff: finite_difference_gradient!, finite_difference_jacobian!,
+    GradientCache, default_relstep
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, Factorization, LU, lu!,
     cholesky!, ldiv!, norm, dot, stride1, diag
-using LinearMaps
+using LinearMaps: WrappedMap
 using MacroTools
 using MacroTools: postwalk
 using Requires
@@ -15,10 +15,11 @@ using SplitApplyCombine: splitdimsview
 using Statistics: mean
 using Tullio: @tullio
 
-import Base: ==, eltype, zero, show, convert
+import Base: ==, eltype, zero, show, convert, Matrix
 import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
+import LinearMaps: check_dim_mul
 import StatsBase: autocov!, autocov, autocor!, autocor
 
 # Reexport
@@ -38,6 +39,9 @@ export supconverged,
        Lead,
        ShiftMap,
 
+       MatMulMap,
+       mapmatmul,
+
        NoRootSolver,
        isvectorrootsolver,
        isscalarrootsolver,
@@ -56,7 +60,6 @@ export supconverged,
        invars,
        ssinputs,
        outputs,
-       hascache,
        outlength,
        SimpleBlock,
        block,
@@ -141,6 +144,7 @@ export supconverged,
        TotalJacobian,
        GEJacobian,
        getG!,
+       getM!,
 
        CombinedBlock,
 
@@ -155,10 +159,13 @@ export supconverged,
        nlirf,
        astable,
 
+       simulate!,
+       simulate,
        loglikelihood!
 
 include("utils.jl")
 include("shift.jl")
+include("mapmatmul.jl")
 include("solvers/interface.jl")
 include("block.jl")
 include("hetagent.jl")
@@ -176,12 +183,13 @@ include("examples/utils.jl")
 include("examples/rbc.jl")
 include("examples/KrusellSmith.jl")
 include("examples/twoasset.jl")
+include("examples/Horvath.jl")
 
 function __init__()
     @require GSL = "92c85e6c-cbff-5e0c-80f7-495c94daaecd" begin
         if VERSION >= v"1.7"
             if !(@isdefined OpenBLAS32_jll)
-                @info "Use OpenBLAS32_jll for GSL"
+                @info "Need to use OpenBLAS32_jll for GSL"
             end
             @require OpenBLAS32_jll = "656ef2d0-ae68-5445-9ca0-591084a874a2" begin
                 BLAS.lbt_forward(OpenBLAS32_jll.libopenblas_path)

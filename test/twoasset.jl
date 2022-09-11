@@ -19,34 +19,34 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
 @testset "TwoAsset" begin
     using SequenceJacobians: TwoAsset as ta
     @testset "SimpleBlock" begin
-        bdividend = ta.dividend_block()
+        bdividend = ta.dividend_blk()
         @test compare(steadystate!(bdividend, tassvals), tassvals, 1e-8)
-        btaylor = ta.taylor_block()
+        btaylor = ta.taylor_blk()
         @test compare(steadystate!(btaylor, tassvals), tassvals, 1e-8)
-        bfiscal = ta.fiscal_block()
+        bfiscal = ta.fiscal_blk()
         @test compare(steadystate!(bfiscal, tassvals), tassvals, 1e-8)
-        bfinance = ta.finance_block()
+        bfinance = ta.finance_blk()
         @test compare(steadystate!(bfinance, tassvals), tassvals, 1e-8)
-        bwage = ta.wage_block()
+        bwage = ta.wage_blk()
         @test compare(steadystate!(bwage, tassvals), tassvals, 1e-8)
-        bunion = ta.union_block()
+        bunion = ta.union_blk()
         @test compare(steadystate!(bunion, tassvals), tassvals, 1e-8)
-        bmkt_clearing = ta.mkt_clearing_block()
+        bmkt_clearing = ta.mkt_clearing_blk()
         @test compare(steadystate!(bmkt_clearing, tassvals), tassvals, 1e-7)
-        bshare_value = ta.share_value_block()
+        bshare_value = ta.share_value_blk()
         @test compare(steadystate!(bshare_value, tassvals), tassvals, 1e-8)
-        bpartial_ss = ta.partial_ss_block()
+        bpartial_ss = ta.partial_ss_blk()
         @test compare(steadystate!(bpartial_ss, tassvals), tassvals, 1e-7)
-        bunion_ss = ta.union_ss_block()
+        bunion_ss = ta.union_ss_blk()
         @test compare(steadystate!(bunion_ss, tassvals), tassvals, 1e-8)
     end
 
     @testset "CombinedBlock" begin
-        bpricing = ta.pricing_block()
+        bpricing = ta.pricing_blk()
         @test compare(steadystate!(bpricing, tassvals), tassvals, 1e-8)
-        barbitrage = ta.arbitrage_block()
+        barbitrage = ta.arbitrage_blk()
         @test compare(steadystate!(barbitrage, tassvals), tassvals, 1e-8)
-        bproduction = ta.production_block()
+        bproduction = ta.production_blk()
         @test compare(steadystate!(bproduction, tassvals), tassvals, 1e-8)
     end
 

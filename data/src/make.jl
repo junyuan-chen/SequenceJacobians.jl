@@ -6,7 +6,7 @@
 # 2) Instantiate the package environment for data/src
 # 3) Run this script with the root folder of the repository being the working directory
 
-using CSV, CodecZlib
+using CSV, CodecZlib, JSON3, MAT
 
 function bayes()
     data = CSV.File("data/data_bayes.csv")
@@ -15,8 +15,27 @@ function bayes()
     end
 end
 
+function vlw()
+    para = matread("data/modelparm_37sec.mat")
+    tfp = matread("data/inddat_TFP_37sec.mat")
+    out = Dict{Symbol,Any}()
+    out[:δ] = para["moddel"]
+    out[:ρA] = para["modrho"]
+    out[:vash] = para["modvash"]
+    out[:ksh] = para["modcapsh"]
+    out[:iomat] = para["modiomat"]
+    out[:csh] = para["modconssh"]
+    out[:invmat] = para["modinvmat"]
+    out[:εA] = tfp["ar1resid_GO"]
+
+    open(GzipCompressorStream, "data/vlw.json.gz", "w") do stream
+        JSON3.write(stream, out)
+    end
+end
+
 function main()
     bayes()
+    vlw()
 end
 
 main()

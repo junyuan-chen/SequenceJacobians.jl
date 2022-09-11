@@ -1,5 +1,5 @@
 using LinearAlgebra: diagind, rmul!
-using LinearMaps: CompositeMap, check_dim_mul, diagm
+using LinearMaps: CompositeMap, UniformScalingMap, diagm
 using SparseArrays: spdiagm
 
 import Base: ndims, has_offset_axes, copy, iszero, transpose, +, -, *, /, size
@@ -88,6 +88,19 @@ function _addorsub(S::Shift, M::AbstractMatrix, op)
         d[m+1:end] .+= S.v[i]
     end
     return out
+end
+
+function _addscale(S1::Shift, sc::Number)
+    d = copy(S1.d)
+    v = copy(S1.v)
+    ind = get(S1.d, (0,0), 0)
+    if ind === 0
+        push!(v, sc)
+        d[(0,0)] = length(v)
+    else
+        v[ind] += sc
+    end
+    return Shift(d, v)
 end
 
 function _mulind(i::Int, m::Int, j::Int, n::Int)
@@ -208,14 +221,17 @@ MulStyle(::ShiftMap) = FiveArg()
 
 transpose(S::ShiftMap) = ShiftMap(transpose(S.S), S.N)
 
-_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVecOrMat) =
+_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector) =
     mul!(C, S.S, B)
 
-_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVecOrMat, α::Number, β::Number) =
+_unsafe_mul!(C::AbstractMatrix, S::ShiftMap, B::AbstractMatrix) =
+    mul!(C, S.S, B)
+
+_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector, α::Number, β::Number) =
     mul!(C, S.S, B, α, β)
 
 # Needed for avoiding method ambiguity
-_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector, α::Number, β::Number) =
+_unsafe_mul!(C::AbstractMatrix, S::ShiftMap, B::AbstractMatrix, α::Number, β::Number) =
     mul!(C, S.S, B, α, β)
 
 (+)(S1::ShiftMap, S2::ShiftMap) =
@@ -230,9 +246,32 @@ function (*)(S1::ShiftMap, S2::ShiftMap)
     return ShiftMap(S1.S*S2.S, S1.N)
 end
 
-function Base.:(*)(A::CompositeMap{T}, S::ShiftMap{T}) where T
+(+)(S::ShiftMap, A::UniformScalingMap) =
+    S.N==A.M ? ShiftMap(_addscale(S.S, A.λ), S.N) : throw(DimensionMismatch())
+
+(+)(A::UniformScalingMap, S::ShiftMap) = S + A
+
+function (*)(S::ShiftMap, A::UniformScalingMap)
+    S.N==A.M || throw(DimensionMismatch())
+    if iszero(A.λ)
+        return A
+    else
+        return ShiftMap(S.S*A.λ, S.N)
+    end
+end
+
+(*)(A::UniformScalingMap, S::ShiftMap) = S * A
+
+(+)(A1::UniformScalingMap, A2::UniformScalingMap) =
+    A1.M==A2.M ? UniformScalingMap(A1.λ+A2.λ, A1.M) : throw(DimensionMismatch())
+
+(*)(A1::UniformScalingMap, A2::UniformScalingMap) =
+    A1.M==A2.M ? UniformScalingMap(A1.λ*A2.λ, A1.M) : throw(DimensionMismatch())
+
+function (*)(A::CompositeMap{T}, S::ShiftMap{T}) where T
     Afirst = first(A.maps)
-    if Afirst isa UniformScalingMap
+    if Afirst isa ShiftMap
+        Afirst.N == S.N || throw(DimensionMismatch())
         A2 = ShiftMap(Afirst.S*S.S, S.N)
         return CompositeMap{T}(tuple(A2, Base.tail(A.maps)...))
     else
@@ -243,6 +282,7 @@ end
 function (*)(S::ShiftMap{T}, A::CompositeMap{T}) where T
     Alast = last(A.maps)
     if Alast isa ShiftMap
+        Alast.N == S.N || throw(DimensionMismatch())
         A2 = ShiftMap(S.S*Alast.S, S.N)
         return CompositeMap{T}(tuple(Base.front(A.maps)..., A2))
     else
@@ -253,3 +293,5 @@ end
 convert(::Type{Matrix{TF}}, S::ShiftMap) where TF =
     diagm(S.N, S.N, (k[1]=>_zdiag(convert(TF, S.S.v[i]), S.N, k...)
         for (k, i) in S.S.d if S.N-abs(i)>0)...)
+
+zero(S::LinearMap{T}) where T = LinearMap(UniformScaling(zero(T)), size(S,2))

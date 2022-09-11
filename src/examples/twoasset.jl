@@ -341,10 +341,10 @@ end
     return inv, val
 end
 
-function production_block()
+function production_blk()
     calis = [:Y=>1, :w=>0.6, :Z=>0.4677898145312322, :α=>0.3299492385786802,
         :r=>0.0125, :δ=>0.02, :εI=>4]
-    return block([labor_block(), investment_block()],
+    return block([labor_blk(), investment_blk()],
         [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],
         calis, [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
 end
@@ -414,17 +414,17 @@ end
 
 function twoassetmodelss()
     bhh = twoassethhblock(4000, 50, 1, 70, 50, 3, 50, 0.966, 0.92)
-    m = model([bhh, income_block(), partial_ss_block(), union_ss_block(), dividend_block(),
-        taylor_block(), fiscal_block(), share_value_block(), finance_block(),
-        mkt_clearing_block()])
+    m = model([bhh, income_blk(), partial_ss_blk(), union_ss_blk(), dividend_blk(),
+        taylor_blk(), fiscal_blk(), share_value_blk(), finance_blk(),
+        mkt_clearing_blk()])
     return m
 end
 
 function twoassetmodel()
     bhh = twoassethhblock(4000, 50, 1, 70, 50, 3, 50, 0.966, 0.92)
-    m = model([bhh, income_block(), production_block(), pricing_block(), arbitrage_block(),
-        dividend_block(), taylor_block(), fiscal_block(), share_value_block(), finance_block(),
-        wage_block(), union_block(), mkt_clearing_block()])
+    m = model([bhh, income_blk(), production_blk(), pricing_blk(), arbitrage_blk(),
+        dividend_blk(), taylor_blk(), fiscal_blk(), share_value_blk(), finance_blk(),
+        wage_blk(), union_blk(), mkt_clearing_blk()])
     return m
 end
 

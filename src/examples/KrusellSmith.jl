@@ -1,7 +1,7 @@
 module KrusellSmith
 
 using ..SequenceJacobians
-using ..SequenceJacobians.RBC: firm_block
+using ..SequenceJacobians.RBC: firm_blk
 
 import SequenceJacobians: endoprocs, exogprocs, valuevars, expectedvalues, policies,
     backwardtargets, backward_init!, backward_endo!
@@ -83,7 +83,7 @@ end
 
 function ksblocks(; hhkwargs...)
     bhh = kshhblock(0, 200, 500, 0.966, 0.5, 7; hhkwargs...)
-    bfirm = firm_block()
+    bfirm = firm_blk()
     bmkt = block(mkt_clearing, [:K, :A, :Y, :C, :δ], [:asset_mkt, :goods_mkt])
     return bhh, bfirm, bmkt
 end
