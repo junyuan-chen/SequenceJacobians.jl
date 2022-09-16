@@ -1,4 +1,4 @@
-const JacMap{TF} = Union{LinearMap{TF}, Matrix{<:LinearMap{TF}}}
+const JacMap{TF} = Union{LinearMap{TF}, Matrix{T}} where T<:LinearMap{TF}
 
 struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     parent::SequenceSpaceModel
@@ -10,7 +10,7 @@ struct TotalJacobian{TF<:AbstractFloat,NT<:NamedTuple}
     tars::Vector{Symbol}
     ntarsrc::Vector{Int}
     excluded::Union{Set{BlockOrVar},Nothing}
-    parts::Dict{Symbol,Dict{Symbol,Matrix{<:LinearMap{TF}}}}
+    parts::Dict{Symbol,Dict{Symbol,Union{Matrix{<:LinearMap{TF}},MatMulMap{TF}}}}
     totals::Dict{Symbol,Dict{Symbol,JacMap{TF}}}
 end
 
@@ -28,7 +28,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
     excluded === nothing || (excluded = Set{BlockOrVar}(excluded))
     vars = copy(sources)
     blks = AbstractBlock[]
-    DMat = Dict{Symbol, Matrix{<:LinearMap{TF}}}
+    DMat = Dict{Symbol, Union{Matrix{<:LinearMap{TF}},MatMulMap{TF}}}
     parts = Dict{Symbol, DMat}()
     DMap = Dict{Symbol, JacMap{TF}}
     totals = Dict{Symbol, DMap}(u=>DMap() for u in vars)
@@ -57,21 +57,40 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     excluded !== nothing && vo in excluded && continue
                     jo = get!(DMat, parts, vo)
                     mj = get(jo, vi, nothing)
+                    hasj0 = mj !== nothing
+                    breakloop = false
                     for ii in 1:Ni
+                        breakloop && break
                         for rr in 1:No
                             # r0 is only used by SimpleBlock
                             j, isz = getjacmap(blk, J, i, ii, r, rr, r0, nT)
                             isz && continue
                             # Create the array mj only when nonzero map is encountered
                             if mj === nothing
-                                mj = Matrix{LinearMap{TF}}(undef, No, Ni)
-                                fill!(mj, zmap)
+                                if j isa MatMulMap
+                                    mj = j # Need this for below
+                                    jo[vi] = j
+                                    breakloop = true
+                                    break
+                                elseif j isa WrappedMap
+                                    mj = Matrix{typeof(j)}(undef, No, Ni)
+                                else
+                                    mj = Matrix{LinearMap{TF}}(undef, No, Ni)
+                                    fill!(mj, zmap)
+                                end
                                 jo[vi] = mj
                             end
                             # j0 might be nonzero if multiple temporal inputs exist
-                            j0 = mj[rr,ii]
-                            # Replace zmap so that it is not accumulated
-                            mj[rr,ii] = j0 === zmap ? j : j0+j
+                            if hasj0
+                                j0 = mj[rr,ii]
+                                if eltype(mj) <: WrappedMap
+                                    mj[rr,ii] = LinearMap(Matrix(j0+j))
+                                else
+                                    mj[rr,ii] = j0 + j
+                                end
+                            else
+                                mj[rr,ii] = j
+                            end
                         end
                     end
                     # Do not bring zeros into total Jacobians
@@ -101,30 +120,20 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                             maplast = get(d, vi, nothing)
                             if maplast !== nothing
                                 # Maps from multiple temporal terms are already summed in mj
-                                if length(mj) == 1
-                                    # maplast shouldn't be a Matrix
-                                    if maplast isa MatOfMap || maplast isa MatMulMap
-                                        mcomp = mapmatmul(mj, maplast)
-                                        # Combine possibly multiple channels
-                                        map0 = get(d, vo, nothing)
-                                        if map0 === nothing
-                                            d[vo] = mcomp
-                                        elseif map0 isa MatMulMap
-                                            d[vo] = mcomp + map0
-                                        else
-                                            d[vo] = mcomp .+ map0
-                                        end
-                                    else
-                                        mcomp = mj[1] * maplast
-                                        map0 = get(d, vo, nothing)
-                                        d[vo] = map0 === nothing ? mcomp : mcomp + map0
-                                    end
+                                # maplast could be a row vector
+                                if length(mj) == 1 &&
+                                        !(maplast isa MatOfMap || maplast isa MatMulMap) &&
+                                        mj isa Matrix
+                                    mcomp = mj[1] * maplast
+                                    # Combine possibly multiple channels
+                                    map0 = get(d, vo, nothing)
+                                    d[vo] = map0 === nothing ? mcomp : mcomp + map0
                                 else
                                     mcomp = mapmatmul(mj, maplast)
                                     map0 = get(d, vo, nothing)
                                     if map0 === nothing
                                         d[vo] = mcomp
-                                    elseif map0 isa MatMulMap
+                                    elseif map0 isa MatMulMap || mcomp isa MatMulMap
                                         d[vo] = mcomp + map0
                                     else
                                         d[vo] = mcomp .+ map0
@@ -136,11 +145,22 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     else
                         # Combine possibly multiple channels
                         map0 = get(unknown, vo, nothing)
-                        if length(mj) == 1
-                            unknown[vo] = map0 === nothing ? mj[1] : mj[1] + map0
+                        if length(mj) == 1 && mj isa Matrix
+                            if map0 === nothing
+                                unknown[vo] = mj[1]
+                            elseif map0 isa Matrix
+                                unknown[vo] = Ref(mj[1]) .+ map0
+                            else
+                                unknown[vo] = mj[1] + map0
+                            end
                         else
-                            # map0 couldn't be a MatMulMap for source
-                            unknown[vo] = map0 === nothing ? mj : mj .+ map0
+                            if map0 === nothing
+                                unknown[vo] = mj
+                            elseif map0 isa MatMulMap || mj isa MatMulMap
+                                unknown[vo] = mj + map0
+                            else
+                                unknown[vo] = mj .+ map0
+                            end
                         end
                     end
                 end
@@ -205,7 +225,7 @@ function _filljac!(out::Matrix, tjac::TotalJacobian, vars)
             if haskey(tj, t)
                 jac = tj[t]
                 if jac isa LinearMap
-                    _unsafe_mul!(view(out, i0+1:i0+nT, j0+1:j0+nT), jac, true)
+                    _unsafe_mul!(view(out, i0+1:i0+M*nT, j0+1:j0+N*nT), jac, true)
                 else
                     for n in 1:N
                         for m in 1:M
@@ -355,7 +375,7 @@ function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
                             M[i] += _resizemap(m[i], nT)
                         end
                     else
-                        M .+= m
+                        M isa MatMulMap ? (M += m) : (M .+= m)
                     end
                 end
             end
@@ -385,12 +405,23 @@ function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     return M
 end
 
-function getM!(GJ::GEJacobian, exovar::Symbol, endovar::Symbol)
+function getM!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     haskey(GJ.Ms, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
     Mz = GJ.Ms[exovar]
     haskey(Mz, endovar) && return Mz[endovar]
     G = getG!(GJ, exovar, endovar)
-    M = Matrix(G)
+    if G isa LinearMap
+        M = Matrix(G)
+    else # Matrix of LinearMaps
+        nT = size(G[1], 1)
+        m, n = size(G)
+        M = Matrix{TF}(undef, m*nT, n*nT)
+        for c in 1:n
+            for r in 1:m
+                _unsafe_mul!(view(M,1+(r-1)*nT:r*nT,1+(c-1)*nT:c*nT), G[r,c], true)
+            end
+        end
+    end
     Mz[endovar] = M
     return M
 end

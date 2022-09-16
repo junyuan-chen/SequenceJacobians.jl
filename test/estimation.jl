@@ -7,7 +7,7 @@
     ss =  SteadyState(m, calis, inits, tars)
     solve!(GSL_Hybrids, ss, xtol=1e-10)
     J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
-    GJ = GEJacobian(J, :Z, keepH_U=true)
+    GJ = GEJacobian(J, :Z)
 
     @testset "autocov autocor" begin
         dZ1 = 0.9.^(0:299)
@@ -16,11 +16,9 @@
         dK1 = getG!(GJ, :Z, :K) * dZ1
         dZ2 = zeros(300)
         dZ2[1] = 1
-        c1 = zeros(300)
-        c1[1] = 1
-        dY2 = getG!(GJ, :Z, :Y) * c1
-        dC2 = getG!(GJ, :Z, :C) * c1
-        dK2 = getG!(GJ, :Z, :K) * c1
+        dY2 = getG!(GJ, :Z, :Y) * dZ2
+        dC2 = getG!(GJ, :Z, :C) * dZ2
+        dK2 = getG!(GJ, :Z, :K) * dZ2
         dX = vcat(dZ1, dY1, dC1, dK1, dZ2, dY2, dC2, dK2)
         Σ = autocov(reshape(dX, 300, 4, 2), [0.1, 0.2])
         @test Σ[1] ≈ 0.09263157894736844 atol=1e-8
@@ -28,7 +26,7 @@
         @test Σ[150,2,3] ≈ -3.184957224656828e-7 atol=1e-12
         @test Σ[200,2,2] ≈ -2.4343217950007922e-8 atol=1e-12
         @test Σ[200,3,4] ≈ -4.5565272153303164e-7 atol=1e-12
-    
+
         corr = autocor(reshape(dX, 300, 4, 2), [0.1, 0.2])
         @test corr[1,1,:] ≈ [1.0, 0.99469738, 0.78762659, 0.60438467] atol=1e-6
         @test corr[2,4,:] ≈ [0.45349869, 0.54275537, 0.88132246, 0.98355236] atol=1e-6

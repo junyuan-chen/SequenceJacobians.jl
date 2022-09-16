@@ -115,13 +115,29 @@ function check_dim_mul(C, M::MatMulMap, B)
     return nothing
 end
 
+function check_dim_mul(M::MatMulMap, B)
+    nT = size(M.A[1], 1)
+    Kr = M.rmap === nothing ? nT * size(M.A,2) : nT * size(M.rmap,2)
+    Kr == size(B, 1) || throw(DimensionMismatch(
+        "M does not match the size of B $(size(B))"))
+    return nothing
+end
+
+function (*)(M::MatMulMap, x::AbstractVector)
+    check_dim_mul(M, x)
+    T = promote_type(eltype(M), eltype(x))
+    y = similar(x, T, size(M,1)*size(M.A[1],1))
+    return mul!(y, M, x)
+end
+
 (+)(A::MatMulMap, B::MatOfMap) =
-    MatMulMap(A.A, A.lmap, A.rmap, A.amap===nothing ? B : A.amap .+ B)
+    MatMulMap(A.A, A.lmap, A.rmap,
+        A.amap === nothing ? B : A.amap isa MatMulMap ? A.amap + B : A.amap .+ B)
 
 (+)(A::MatOfMap, B::MatMulMap) = B + A
 
 (+)(A::MatMulMap, B::MatMulMap) =
-    MatMulMap(A.A, A.lmap, A.rmap, A.amap===nothing ? B : A.amap + B)
+    MatMulMap(A.A, A.lmap, A.rmap, A.amap === nothing ? B : A.amap + B)
 
 mapmatmul(A::MatOfMap, B::AbstractMatrix{<:WrappedMap}) =
     MatMulMap(B, A, nothing)
@@ -129,22 +145,34 @@ mapmatmul(A::MatOfMap, B::AbstractMatrix{<:WrappedMap}) =
 mapmatmul(A::AbstractMatrix{<:WrappedMap}, B::MatOfMap) =
     MatMulMap(A, nothing, B)
 
+mapmatmul(A::AbstractMatrix{<:WrappedMap}, B::AbstractMatrix{<:WrappedMap}) =
+    MatMulMap(A, nothing, B)
+
 # A has only one column in this case
 mapmatmul(A::AbstractMatrix{<:WrappedMap}, B::LinearMap) =
     MatMulMap(A, nothing, reshape([B], 1, 1))
 
+mapmatmul(A::AbstractMatrix{<:WrappedMap}, B::MatMulMap) =
+    MatMulMap(A, nothing, B)
+
+# A needs to be a MatOfMap and hence the fields need to be reassembled
 mapmatmul(A::MatMulMap, B::MatOfMap) =
-    MatMulMap(A.A, A.lmap, mapmatmul(A.rmap, B))
+    MatMulMap(A.A, A.lmap, mapmatmul(A.rmap, B),
+    A.amap === nothing ? nothing : mapmatmul(A.amap, B))
 
 mapmatmul(A::MatOfMap, B::MatMulMap) =
-    MatMulMap(B.A, mapmatmul(A, B.lmap), B.rmap)
+    MatMulMap(B.A, mapmatmul(A, B.lmap), B.rmap,
+    B.amap === nothing ? nothing : mapmatmul(A, B.amap))
 
 mapmatmul(A::MatMulMap, B::MatMulMap) =
-    MatMulMap(A.A, A.lmap, mapmatmul(A.rmap, B))
+    MatMulMap(A.A, A.lmap, mapmatmul(A.rmap, B),
+        A.amap === nothing ? nothing : mapmatmul(A.amap, B))
 
 # MatMulMap may contain Nothing
 mapmatmul(::Nothing, B::MatOfMap) = B
+mapmatmul(::Nothing, B::MatMulMap) = B
 mapmatmul(A::MatOfMap, ::Nothing) = A
+mapmatmul(A::MatMulMap, ::Nothing) = A
 mapmatmul(::Nothing, ::Nothing) = nothing
 
 # Fallback methods that do not use MatMulMap
@@ -202,32 +230,65 @@ function _mat!(C::AbstractVecOrMat, A::MatOfMap, B::MatOfMap)
     return C
 end
 
-function Matrix(M::MatMulMap{T}) where T
-    nT = size(M.A[1], 1)
-    if M.rmap !== nothing
-        temp = Matrix{T}(undef, size(M.A,1)*nT, size(M.rmap,2)*nT)
-        _mat!(temp, M.A, M.rmap)
-        if M.lmap !== nothing
-            out = Matrix{T}(undef, size(M.lmap,1)*nT, size(M.A,2)*nT)
-            _mul!(out, M.lmap, temp)
-        else
-            out = temp
-        end
-    else
-        out = Matrix{T}(undef, size(M.lmap,1)*nT, size(M.A,2)*nT)
-        _mat!(out, M.lmap, M.A)
-    end
-    if M.amap !== nothing
-        if M.amap isa MatMulMap
-            out .+= Matrix(M.amap)
-        else
-            R, C = size(M.amap)
-            for c in 1:C
-                for r in 1:R
-                    out[1+(r-1)*nT:r*nT,1+(c-1)*nT:c*nT] .+= Matrix(M.amap[r,c])
+function _mat!(C::AbstractVecOrMat, A::MatOfMap, B::MatMulMap)
+    # Assume each LinearMap in A is square with the same size
+    nT = size(A[1], 1)
+    M = size(A, 1)
+    N = size(B, 2)
+    K = size(A, 2)
+    K == size(B, 1) || throw(DimensionMismatch(
+        "matrix A with $K columns and matrix B with $(size(B,1)) rows"))
+    size(C, 1) == M*nT && size(C, 2) == N*nT ||throw(DimensionMismatch(
+        "matrix C has size $(size(C)); expect size ($(M*nT), $(N*nT)"))
+    MB = Matrix(B)
+    for n in 1:N
+        rc = 1+(n-1)*nT:n*nT
+        for m in 1:M
+            tar = view(C,1+(m-1)*nT:m*nT,rc)
+            _unsafe_mul!(tar, A[m,1], view(MB,1:nT,rc))
+            if K > 1
+                for k in 2:K
+                    _unsafe_mul!(tar, A[m,k], view(MB,1+(k-1)*nT:k*nT,rc), true, true)
                 end
             end
         end
     end
+end
+
+function _unsafe_mul!(C::AbstractVecOrMat, M::MatMulMap, B::Bool)
+    if B
+        nT = size(M.A[1], 1)
+        if M.rmap !== nothing && M.lmap !== nothing
+            temp = Matrix{eltype(M)}(undef, size(M.A,1)*nT, size(M.rmap,2)*nT)
+            _mat!(temp, M.A, M.rmap)
+            _mul!(C, M.lmap, temp)
+        elseif M.rmap !== nothing && M.lmap === nothing
+            _mat!(C, M.A, M.rmap)
+        else
+            _mat!(C, M.lmap, M.A)
+        end
+        if M.amap !== nothing
+            if M.amap isa MatMulMap
+                C .+= Matrix(M.amap)
+            else
+                nR, nC = size(M.amap)
+                for c in 1:nC
+                    for r in 1:nR
+                        C[1+(r-1)*nT:r*nT,1+(c-1)*nT:c*nT] .+= Matrix(M.amap[r,c])
+                    end
+                end
+            end
+        end
+    else
+        fill!(C, zero(eltype(C)))
+    end
+    return C
+end
+
+function Matrix(M::MatMulMap{T}) where T
+    nT = size(M.A[1], 1)
+    m, n = size(M)
+    out = Matrix{T}(undef, m*nT, n*nT)
+    _unsafe_mul!(out, M, true)
     return out
 end

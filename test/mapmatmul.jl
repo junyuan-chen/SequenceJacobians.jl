@@ -8,6 +8,7 @@
     fill!(B, U)
     MMr = mapmatmul(A, B)
     @test size(MMr) == (2, 2)
+    @test LinearMaps.MulStyle(MMr) == LinearMaps.FiveArg()
     @test MMr.A === A
     @test MMr.rmap === B
     @test MMr.lmap === nothing
@@ -17,6 +18,7 @@
     X = rand(6)
     mul!(C, MMr, X)
     @test C ≈ [m m; m m] * [U U; U U] * X
+    @test MMr * X == C
 
     U1 = LinearMap(2.0 * I, 3)
     A1 = Matrix{WrappedMap}(undef, 2, 1)
@@ -54,6 +56,8 @@
     C1 = Vector{Float64}(undef, 3)
     mul!(C1, MMlr1, X)
     @test C1 ≈ [U U] * [m m; m m] * [U U; U U] * X
+    MMlr1mat = Matrix(MMlr1)
+    @test MMlr1mat * X ≈ C1
 
     B1 = reshape(B1, 2, 1)
     MMlr2 = mapmatmul(MMl, B1)
@@ -91,6 +95,18 @@
     MMra3 = MMra1 + MMra1
     mul!(C, MMra3, X)
     @test C ≈ 2 * [m m; m m] * [U U; U U] * X + 2 * [U U; U U] * X
+
+    MMra1B = mapmatmul(MMra1, B)
+    t = B[1]*X[1:3]+B[2]*X[4:6]
+    t = vcat(t, t)
+    t = B[1]*t[1:3]+B[2]*t[4:6]
+    @test mul!(C, MMra1B, X) ≈ mapmatmul(MMr, B)*X + vcat(t, t)
+
+    BMMra1 = mapmatmul(B, MMra1)
+    @test mul!(C, BMMra1, X) ≈ mapmatmul(B, MMr)*X + vcat(t, t)
+
+    MMra12 = mapmatmul(MMra1, MMra2)
+    @test mul!(C, MMra12, X) ≈ mul!(C, MMra1, MMra2 * X)
 
     @test mapmatmul(B, B) == B * B
     @test mapmatmul(B1, U) == B1 .* Ref(U)

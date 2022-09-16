@@ -6,6 +6,7 @@ function _transform!(d::Dict, trans::Vector{Symbol}, GJ::GEJacobian)
             irf = get(irfs, v, nothing)
             if irf !== nothing
                 ss = varvals[v]
+                ss isa Array && (ss = reshape(ss,1,length(ss)))
                 irf .= 100.0.*irf./ss
             end
         end
@@ -18,6 +19,7 @@ function _transform!(d::Dict, trans::Bool, GJ::GEJacobian)
         for irfs in values(d)
             for (v, irf) in irfs
                 ss = varvals[v]
+                ss isa Array && (ss = reshape(ss,1,length(ss)))
                 irf .= 100.0.*irf./ss
             end
         end
@@ -31,15 +33,18 @@ function linirf(GJ::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing;
     endovars isa Symbol && (endovars = (endovars,))
     endovars === nothing && (endovars = setdiff(tjac.vars, GJ.exovars, tjac.tars))
     isempty(endovars) && throw(ArgumentError("endovars cannot be empty"))
-    nT = tjac.nT
+    nT = GJ.nTfull
     out = Dict{Symbol,Dict{Symbol,VecOrMat{TF}}}()
     for (exo, dZ) in dshocks
         size(dZ,1) == nT || throw(ArgumentError("the length of shock $exo is not $nT"))
         d = Dict{Symbol,VecOrMat{TF}}()
         out[exo] = d
         for endo in endovars
-            G = getG!(GJ, exo, endo)
-            d[endo] = G * dZ
+            M = getM!(GJ, exo, endo)
+            dZ isa Vector || (dZ = view(dZ,:))
+            r = M * dZ
+            length(r) == nT || (r = reshape(r, nT, length(r)÷nT))
+            d[endo] = r
         end
     end
     _transform!(out, transform, GJ)

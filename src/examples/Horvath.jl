@@ -23,11 +23,12 @@ struct HorvathPlanner{TF<:AbstractFloat,CA}
     μ::Vector{TF}
     ζ::Vector{TF}
     ζdiff::Vector{TF}
+    Ydiff::Vector{TF}
     goods_mkt::Vector{TF}
     euler::Vector{TF}
     invpiece::Vector{TF}
     multmat::Matrix{TF}
-    μy::Vector{TF}
+    μY::Vector{TF}
     lcons::Vector{TF}
     kcons::Vector{TF}
     xcons::Vector{TF}
@@ -65,11 +66,12 @@ function HorvathPlanner(para::AbstractDict)
     μ = Vector{TF}(undef, N)
     ζ = Vector{TF}(undef, N)
     ζdiff = Vector{TF}(undef, N)
+    Ydiff = Vector{TF}(undef, N)
     goods_mkt = Vector{TF}(undef, N)
     euler = Vector{TF}(undef, N)
     invpiece = Vector{TF}(undef, N)
     multmat = Matrix{TF}(undef, N, N)
-    μy = Vector{TF}(undef, N)
+    μY = Vector{TF}(undef, N)
     lcons = Vector{TF}(undef, N)
     kcons = Vector{TF}(undef, N)
     xcons = Vector{TF}(undef, N)
@@ -84,8 +86,8 @@ function HorvathPlanner(para::AbstractDict)
     μdiff = Vector{TF}(undef, N)
     ca = GSL_MultirootFSolverCache(GSL_Hybrids, (f,x)->f, N)
     return HorvathPlanner(α, ξ, θ, Γ, Λ, δ, ρA, C, A, K, I, Z, L, X, Y, VA, μ, ζ,
-        ζdiff, goods_mkt, euler,
-        invpiece, multmat, μy, lcons, kcons, xcons, ycons, μcons, μexp, ζk,
+        ζdiff, Ydiff, goods_mkt, euler,
+        invpiece, multmat, μY, lcons, kcons, xcons, ycons, μcons, μexp, ζk,
         μZ, lZ, lμZ, μrhs, μdiff, ca)
 end
 
@@ -99,49 +101,50 @@ end
 
 # Solutions for steady state follow vom Lehn and Winberry (2021)
 @simple function ss(p, β, eis, frisch, hwelast)
-    N = length(p.α)
     fill!(p.A, 1.0)
-    p.invpiece .= reshape(sum(log.(p.Λ.^p.Λ), dims=1), N)
+    p.invpiece .= view(sum(log.(p.Λ.^p.Λ), dims=1), :)
     p.multmat .= p.Γ .* (1.0.-p.θ)' .+ β .* p.Λ .*
         (p.δ .* p.θ .* p.α ./ (1.0 .- β .* (1.0.-p.δ)))'
-    p.μy .= (LinearAlgebra.I - p.multmat)\p.ξ
-    p.lcons .= (1.0.-p.α) .* p.θ .* p.μy
+    p.μY .= (LinearAlgebra.I - p.multmat)\p.ξ
+    p.lcons .= (1.0.-p.α) .* p.θ .* p.μY
     p.lcons ./= sum(p.lcons).^(frisch/(1+frisch))
-    p.kcons .= β ./ (1.0.-β.*(1.0.-p.δ)) .* p.α .* p.θ .* p.μy
-    p.xcons .= (1.0.-p.θ) .* p.μy
+    p.kcons .= β ./ (1.0.-β.*(1.0.-p.δ)) .* p.α .* p.θ .* p.μY
+    p.xcons .= (1.0.-p.θ) .* p.μY
     p.ycons .= p.lcons.^((1.0.-p.α).*p.θ) .* p.kcons.^(p.θ.*p.α) .* p.xcons.^(1.0.-p.θ)
-    p.μcons .= (prod(p.Λ.^p.Λ, dims=1)').^(p.θ.*p.α) .*(prod(p.Γ.^p.Γ, dims=1)').^(1.0.-p.θ)
+    p.μcons .= (view(prod(p.Λ.^p.Λ, dims=1),:)).^(p.θ.*p.α) .*
+        (view(prod(p.Γ.^p.Γ, dims=1),:)).^(1.0.-p.θ)
     p.μexp .= LinearAlgebra.I - p.Γ'.*(1.0.-p.θ) - p.Λ'.*(p.θ.*p.α)
-    p.ζk .= β .* p.θ .* p.α .* p.μy ./ (1.0.-β.*(1.0.-p.δ))
+    p.ζk .= β .* p.θ .* p.α .* p.μY ./ (1.0.-β.*(1.0.-p.δ))
     p.μZ .= p.Λ * (p.δ .* p.ζk)
-    p.μ .= exp.(p.μexp \ (log.(p.μy) .- log.(p.μcons) .- log.(p.ycons)))
+    p.μ .= exp.(p.μexp \ (log.(p.μY) .- log.(p.μcons) .- log.(p.ycons)))
     if hwelast == -1
         p.ζ .= exp.(p.Λ'*log.(p.μ) .- p.invpiece)
-        p.Y .= p.μy ./ p.μ
+        p.Y .= p.μY ./ p.μ
         p.K .= β ./ (1.0.-β.*(1.0.-p.δ)) .* (p.θ.*p.α) .* p.μ ./ p.ζ .* p.Y
     else
         p.lμZ .= log.(p.μZ)
         p.lμZ[.~isfinite.(p.lμZ)] .= 0
         # Must take log after prod as Γ contains 0s
-        p.μrhs .= log.(p.μy) .- (1.0.-p.θ).*log.(prod(p.Γ.^p.Γ, dims=1)') .-
+        p.μrhs .= log.(p.μY) .- (1.0.-p.θ).*log.(view(prod(p.Γ.^p.Γ, dims=1),:)) .-
             ((1.0.-p.α).*p.θ).*log.(p.lcons) .- (1.0.-p.θ).*log.(p.xcons)
         p.μexp .= LinearAlgebra.I - p.Γ'.*(1.0.-p.θ)
         r = solve!(p.ca, (f,x)->solveμ!(p,hwelast,f,x), p.μ, ftol=1e-9)
         p.μ .= r[1]
         p.ζ .= p.ζk ./ p.K
-        p.Y .= p.μy ./ p.μ
+        p.Y .= p.μY ./ p.μ
     end
     p.Z .= p.μZ ./ p.μ
     Ctot = prod((p.ξ./p.μ).^p.ξ).^(1/eis)
     p.C .= p.ξ./p.μ.*Ctot.^(1.0.-eis)
-    Lsum = sum((1.0.-p.α) .* p.θ .* p.μy)^(frisch/(1+frisch))
+    Lsum = sum((1.0.-p.α) .* p.θ .* p.μY)^(frisch/(1+frisch))
     p.L .= p.μ .* (1.0.-p.α) .* p.θ .* p.Y ./ Lsum
     Ltot = sum(p.L)
     p.I .= p.δ .* p.K
-    p.X .= p.μy .* (1.0.-p.θ) .* prod((p.Γ./p.μ).^p.Γ, dims=1)'
+    p.X .= p.μY .* (1.0.-p.θ) .* view(prod((p.Γ./p.μ).^p.Γ, dims=1),:)
     p.VA .= p.K.^p.α .* p.L.^(1.0.-p.α)
-    C, K, I, Z, L, X, Y, VA, μ, ζ, A = p.C, p.K, p.I, p.Z, p.L, p.X, p.Y, p.VA, p.μ, p.ζ, p.A
-    return Ctot, Ltot, C, K, I, Z, L, X, Y, VA, μ, ζ, A
+    C, K, I, Z, L, X, Y, VA, μ, ζ, A, μY =
+        p.C, p.K, p.I, p.Z, p.L, p.X, p.Y, p.VA, p.μ, p.ζ, p.A, p.μY
+    return Ctot, Ltot, C, K, I, Z, L, X, Y, VA, μ, ζ, A, μY
 end
 
 @simple function consumption(p, μ, eis)
@@ -169,31 +172,35 @@ end
     return Ltotdiff
 end
 
-# All the K is lag K in Dynare
-# Need this change to get the solutions
-@simple function investment(p, K)
-    I = p.I
-    I .= lead(K) .- (1.0.-p.δ) .* K
-    return I
+@simple function valueadded(p, A, K, L)
+    VA = p.VA
+    VA .= A.^(1.0./p.θ) .* lag(K).^p.α .* L.^(1.0.-p.α)
+    return VA
 end
 
-@simple function capital(p, A, Y, L, X)
-    K = p.K
-    K .= (Y ./ (A .* L.^((1.0.-p.α).*p.θ) .* X.^(1.0.-p.θ))).^(1.0./(p.α.*p.θ))
-    return K
-end
-
-@simple function intermediate(p, Y, μ)
+@simple function intermediate(p, μ, Y)
     X = p.X
     N = length(X)
     for j in 1:N
-        X[j] = Y[j] * μ[j] * (1.0-p.θ[j])
+        X[j] = μ[j] * Y[j] * (1.0-p.θ[j])
         for i in 1:N
             γ = p.Γ[i,j]
             X[j] *= (γ/μ[i])^γ
         end
     end
     return X
+end
+
+@simple function production(p, VA, X, Y)
+    Ydiff = p.Ydiff
+    Ydiff .= VA.^p.θ .* X.^(1.0.-p.θ) .- Y
+    return Ydiff
+end
+
+@simple function investment(p, K)
+    I = p.I
+    I .= K .- (1.0.-p.δ) .* lag(K)
+    return I
 end
 
 @simple function investuse(p, ζ, μ, I)
@@ -237,20 +244,22 @@ end
 
 @simple function euler(p, ζ, β, μ, Y, K)
     euler = p.euler
-    euler .= β .* (μ .* p.α .* p.θ .* Y ./ K .+ ζ .* (1.0.-p.δ)) .- lag(ζ)
+    euler .= β .* (p.α .* p.θ .* lead(μ) .* lead(Y) ./ K .+ lead(ζ) .* (1.0.-p.δ)) .- ζ
     return euler
 end
 
 function Horvathmodel(p, calis)
-    push!(calis, :μ=>p.μ, :I=>p.I, :Y=>p.Y)
+    N = length(p.α)
+    calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :K=>p.K, :frisch=>calis[:frisch]]
+    calisbζ = [:p=>p, :μ=>p.μ, :I=>p.I, :hwelast=>calis[:hwelast]]
+    bY = block([labor_blk(), labortot_blk(), valueadded_blk(), intermediate_blk(),
+        production_blk()], [:μ, :A, :K], [:Y, :Ltot, :L, :VA, :X],
+        calisbY, [:Y=>p.Y, :Ltot=>sum(p.L)],
+        [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=GSL_Hybrids)
     bζ = block([investuse_blk(), investprice_blk()],
-        [:μ, :I], [:ζ, :Z], calis, :ζ=>p.ζ, :ζdiff=>zeros(length(p.ζ)),
-        solver=GSL_Hybrids, static=true)
-    bL = block([labor_blk(), labortot_blk()],
-        [:μ, :Y], [:Ltot, :L], calis, :Ltot=>sum(p.L), :Ltotdiff=>0.0,
-        solver=GSL_Hybrids, static=true)
-    m = model([consumption_blk(), constot_blk(), bL, investment_blk(), capital_blk(),
-        intermediate_blk(), bζ, goods_mkt_blk(), euler_blk()])
+        [:μ, :I], [:ζ, :Z], calisbζ, :ζ=>p.ζ, :ζdiff=>zeros(N), solver=GSL_Hybrids)
+    m = model([consumption_blk(), constot_blk(), bY, investment_blk(),
+        bζ, goods_mkt_blk(), euler_blk()])
     return m
 end
 
