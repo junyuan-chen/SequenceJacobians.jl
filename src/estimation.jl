@@ -1,64 +1,82 @@
 # Assume x is already padded with zeros
-function _autocov!(r::AbstractArray{Complex{TF},3}, x::AbstractArray{TF,3},
-        σ::AbstractVector{TF}) where TF<:AbstractFloat
+function _allcov!(r::AbstractArray{<:Complex,3}, x::AbstractArray{<:Real,3},
+        σ::AbstractVector{<:Real})
     N = size(x, 1)
     dft = rfft(x, 1)
     @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ[z]^2 * dft[t,o2,z]
     return irfft(r, N, 1)
 end
 
-function autocov!(r::AbstractArray{Complex{TF},3}, x::AbstractArray{TF,3},
-        σ::AbstractVector{TF}) where TF<:AbstractFloat
+function _allcov!(r::AbstractArray{<:Complex,3}, x::AbstractArray{<:Real,3}, σ::Real)
+    N = size(x, 1)
+    dft = rfft(x, 1)
+    @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ^2 * dft[t,o2,z]
+    return irfft(r, N, 1)
+end
+
+function allcov!(r::AbstractArray{<:Complex{TF},3}, x::AbstractArray{<:Real,3},
+        σ::Union{AbstractVector{<:Real},Real}=1) where TF<:AbstractFloat
     T, O, Z = size(x)
     # Pad x with zeros
     x1 = zeros(TF, 2*T-2, O, Z)
     copyto!(view(x1,1:T,:,:), x)
-    return view(_autocov!(r, x1, σ),1:T,:,:)
+    return view(_allcov!(r, x1, σ),1:T,:,:)
 end
 
-function autocov(x::AbstractArray{TF,3}, σ::AbstractVector{TF}) where TF<:AbstractFloat
+function allcov(x::AbstractArray{<:Real,3}, σ::Union{AbstractVector{<:Real},Real}=1)
     T, O, _ = size(x)
+    TF = promote_type(eltype(x), σ isa Real ? typeof(σ) : eltype(σ))
     r = Array{Complex{TF},3}(undef, T, O, O)
-    return autocov!(r, x, σ)
+    return allcov!(r, x, σ)
 end
 
-function autocor!(r::AbstractArray{Complex{TF},3}, x::AbstractArray{TF,3},
-        σ::AbstractVector{TF}) where TF<:AbstractFloat
-    cov = autocov!(r, x, σ)
+function allcor!(r::AbstractArray{<:Complex,3}, x::AbstractArray{<:Real,3},
+        σ::Union{AbstractVector{<:Real},Real}=1)
+    cov = allcov!(r, x, σ)
     sd = sqrt.(diag(view(cov,1,:,:)))
     cov .= cov ./ sd' ./ reshape(sd,1,1,length(sd))
     return cov
 end
 
-function autocor(x::AbstractArray{TF,3}, σ::AbstractVector{TF}) where TF<:AbstractFloat
+function allcor(x::AbstractArray{<:Real,3}, σ::Union{AbstractVector{<:Real},Real}=1)
     T, O, _ = size(x)
+    TF = promote_type(eltype(x), σ isa Real ? typeof(σ) : eltype(σ))
     r = Array{Complex{TF},3}(undef, T, O, O)
-    return autocor!(r, x, σ)
+    return allcor!(r, x, σ)
 end
 
-function autocov!(V::AbstractMatrix{TF}, r::AbstractArray{TF,3},
-        error::Union{Diagonal,UniformScaling,Nothing}=nothing) where TF<:AbstractFloat
-    T, O, _ = size(r)
-    N = size(V, 2)
-    Tobs = Int(N/O)
-    V1 = reshape(V, Tobs, O, Tobs, O)
-    @inbounds for t2 in 1:Tobs
-        for t1 in 1:Tobs
-            l = abs(t1-t2)+1
-            if l > T
-                fill!(view(V1,t1,:,t2,:), zero(TF))
-            elseif t1 < t2
-                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))
-            elseif t1 > t2
-                # Asymmetric
-                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:)')
-            elseif t1 == t2
-                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))
-                error === nothing || (V1[t1,:,t2,:] += error)
-            end
-        end
+function correlogram!(out::AbstractVecOrMat, r::AbstractArray{<:Complex,3},
+        x::AbstractArray{<:Real,3}, ps::Union{Pair{Int,Int}, AbstractVector{Pair{Int,Int}}};
+        lagmin::Int=0, lagmax::Int=0, σ::Union{AbstractVector{<:Real},Real}=1)
+    lagmax >= lagmin || throw(ArgumentError("lagmax cannot be smaller than lagmin"))
+    Tfull = size(x, 1)
+    -Tfull < lagmax < Tfull || throw(ArgumentError("invalid value of lagmax"))
+    -Tfull < lagmin < Tfull || throw(ArgumentError("invalid value of lagmin"))
+    L = lagmax - lagmin + 1
+    np = ps isa Pair ? 1 : length(ps)
+    size(out) == (L, np) || throw(ArgumentError(
+        "size of out ($(size(out))) does not match the ps or range of lags"))
+    cor = allcor!(r, x, σ)
+    rpos = lagmax>=0 ? (max(lagmin,0)+1:lagmax+1) : ()
+    npos = length(rpos)
+    rneg = lagmin<0 ? (-lagmin+1:-1:-min(lagmax,-1)+1) : ()
+    nneg = length(rneg)
+    ps isa Pair && (ps = (ps,))
+    for (i, p) in enumerate(ps)
+        nneg > 0 && copyto!(view(out,1:nneg,i), view(cor,rneg,p[1],p[2]))
+        npos > 0 && copyto!(view(out,nneg+1:nneg+npos,i), view(cor,rpos,p[2],p[1]))
     end
-    return V
+    return out
+end
+
+function correlogram(x::AbstractArray{<:Real,3},
+        ps::Union{Pair{Int,Int}, AbstractVector{Pair{Int,Int}}};
+        lagmin::Int=0, lagmax::Int=0, σ::Union{AbstractVector{<:Real},Real}=1)
+    TF = promote_type(eltype(x), σ isa Real ? typeof(σ) : eltype(σ))
+    out = Matrix{TF}(undef, lagmax-lagmin+1, ps isa Pair ? 1 : length(ps))
+    T, O, _ = size(x)
+    r = Array{Complex{TF},3}(undef, T, O, O)
+    return correlogram!(out, r, x, ps; lagmin=lagmin, lagmax=lagmax, σ=σ)
 end
 
 function _simul_shock!(dY::AbstractVecOrMat, dX::AbstractVecOrMat, ε::AbstractVecOrMat, nT::Int)
@@ -125,6 +143,31 @@ function simulate(GJ::GEJacobian{T1}, exovar::Symbol, endovar::Symbol,
     out = Matrix{promote_type(T1,T2)}(undef, T, nout)
     simulate!(out, GJ, exovar, endovar, ε, ρ, σ; kwargs...)
     return out
+end
+
+function allcov!(V::AbstractMatrix{TF}, r::AbstractArray{TF,3},
+        error::Union{Diagonal,UniformScaling,Nothing}=nothing) where TF<:AbstractFloat
+    T, O, _ = size(r)
+    N = size(V, 2)
+    Tobs = Int(N/O)
+    V1 = reshape(V, Tobs, O, Tobs, O)
+    @inbounds for t2 in 1:Tobs
+        for t1 in 1:Tobs
+            l = abs(t1-t2)+1
+            if l > T
+                fill!(view(V1,t1,:,t2,:), zero(TF))
+            elseif t1 < t2
+                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))
+            elseif t1 > t2
+                # Asymmetric
+                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:)')
+            elseif t1 == t2
+                copyto!(view(V1,t1,:,t2,:), view(r,l,:,:))
+                error === nothing || (V1[t1,:,t2,:] += error)
+            end
+        end
+    end
+    return V
 end
 
 function loglikelihood!(Y::Vector, Y1::Vector, V::Matrix)

@@ -82,7 +82,7 @@ end
             1.50710416824670e-5] atol=1e-10
 
         A = 0.01 .* p.ρA'.^(0:T-1)
-        irf = linirf(GJ, :A=>A)
+        @time irf = linirf(GJ, :A=>A)
         irfL = irf[:A][:L] .+ vals[:L]'
         @test haskey(GJ.Ms[:A], :L)
 

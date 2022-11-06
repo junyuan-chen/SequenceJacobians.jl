@@ -7,7 +7,7 @@ using GSL
 using JSON3
 using LinearAlgebra
 using LinearMaps
-using LinearMaps: UniformScalingMap, WrappedMap
+using LinearMaps: UniformScalingMap, WrappedMap, _unsafe_mul!
 using LoopVectorization
 using NLsolve
 using Roots: Brent, Secant

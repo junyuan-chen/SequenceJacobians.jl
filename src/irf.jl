@@ -6,7 +6,7 @@ function _transform!(d::Dict, trans::Vector{Symbol}, GJ::GEJacobian)
             irf = get(irfs, v, nothing)
             if irf !== nothing
                 ss = varvals[v]
-                ss isa Array && (ss = reshape(ss,1,length(ss)))
+                ss isa AbstractArray && (ss = reshape(ss,1,length(ss)))
                 irf .= 100.0.*irf./ss
             end
         end
@@ -19,7 +19,7 @@ function _transform!(d::Dict, trans::Bool, GJ::GEJacobian)
         for irfs in values(d)
             for (v, irf) in irfs
                 ss = varvals[v]
-                ss isa Array && (ss = reshape(ss,1,length(ss)))
+                ss isa AbstractArray && (ss = reshape(ss,1,length(ss)))
                 irf .= 100.0.*irf./ss
             end
         end

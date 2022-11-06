@@ -136,6 +136,11 @@ end
 
 (+)(A::MatOfMap, B::MatMulMap) = B + A
 
+# Needed for the case when A has size (1,1)
+(+)(A::MatMulMap, B::LinearMap) = A + reshape([B], 1, 1)
+
+(+)(A::LinearMap, B::MatMulMap) = B + A
+
 (+)(A::MatMulMap, B::MatMulMap) =
     MatMulMap(A.A, A.lmap, A.rmap, A.amap === nothing ? B : A.amap + B)
 
@@ -159,6 +164,9 @@ mapmatmul(A::AbstractMatrix{<:WrappedMap}, B::MatMulMap) =
 mapmatmul(A::MatMulMap, B::MatOfMap) =
     MatMulMap(A.A, A.lmap, mapmatmul(A.rmap, B),
     A.amap === nothing ? nothing : mapmatmul(A.amap, B))
+
+mapmatmul(A::MatMulMap, B::LinearMap) =
+    mapmatmul(A, reshape([B], 1, 1))
 
 mapmatmul(A::MatOfMap, B::MatMulMap) =
     MatMulMap(B.A, mapmatmul(A, B.lmap), B.rmap,

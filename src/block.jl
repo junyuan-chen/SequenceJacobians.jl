@@ -3,11 +3,11 @@ struct VarSpec
     shift::Int
 end
 
-var(name::Symbol; shift::Int=0) = VarSpec(name, shift)
-var(v::VarSpec) = v
+varspec(name::Symbol; shift::Int=0) = VarSpec(name, shift)
+varspec(v::VarSpec) = v
 
-lag(name::Symbol, n=1) = var(name, shift=-n)
-lead(name::Symbol, n=1) = var(name, shift=n)
+lag(name::Symbol, n=1) = varspec(name, shift=-n)
+lead(name::Symbol, n=1) = varspec(name, shift=n)
 
 name(v::VarSpec) = getfield(v, :name)
 shift(v::VarSpec) = getfield(v, :shift)
@@ -58,7 +58,7 @@ function _inout(ins, outs, ssins)
     outs = outs isa Symbol ? (outs,) : (outs...,)
     ssins isa Union{Symbol,VarSpec} && (ssins = (ssins,))
     # Must do invars before ins
-    invars = map(var, ins)
+    invars = map(varspec, ins)
     ins = map(name, ins)
     ssins = Set{Symbol}(map(name, ssins))
     outs = map(name, outs)

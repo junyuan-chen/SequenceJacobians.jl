@@ -20,13 +20,11 @@ import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
 import LinearMaps: check_dim_mul
-import StatsBase: autocov!, autocov, autocor!, autocor
 
 # Reexport
 export solve!
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
-export autocov!, autocov, autocor!, autocor
 
 export supconverged,
        interpolate_y!,
@@ -50,7 +48,7 @@ export supconverged,
        rootsolvercache,
 
        VarSpec,
-       var,
+       varspec,
        lag,
        lead,
        name,
@@ -159,6 +157,12 @@ export supconverged,
        nlirf,
        astable,
 
+       allcov!,
+       allcov,
+       allcor!,
+       allcor,
+       correlogram!,
+       correlogram,
        simulate!,
        simulate,
        loglikelihood!

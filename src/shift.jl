@@ -14,6 +14,8 @@ struct Shift{T<:Number}
     v::Vector{T}
 end
 
+# Sign convention for lead/lag follows the Python package
+# The paper appendix uses the opposite sign
 Lag(v::Number=1.0) = Shift(SInd((-1,0)=>1), [v])
 Lead(v::Number=1.0) = Shift(SInd((1,0)=>1), [v])
 
@@ -151,7 +153,8 @@ function (*)(S1::Shift, S2::Shift)
 end
 
 @inline function mul!(C::AbstractVecOrMat, S::Shift, B::AbstractVecOrMat, α::Number, β::Number)
-    rmul!(C, β)
+    # C could contain NaN
+    iszero(β) ? fill!(C, zero(eltype(C))) : rmul!(C, β)
     # Need to call size twice in case B is a Vector
     r, c = size(B, 1), size(B, 2)
     @inbounds for (k, i) in S.d
@@ -171,28 +174,6 @@ end
 end
 
 (*)(S::Shift, B::AbstractVecOrMat) = mul!(similar(B), S, B, true, false)
-
-@inline function mul!(C::AbstractVecOrMat, A::AbstractVecOrMat, S::Shift, α::Number, β::Number)
-    rmul!(C, β)
-    # Need to call size twice in case B is a Vector
-    r, c = size(A, 1), size(A, 2)
-    @inbounds for (k, i) in S.d
-        id, m = k
-        -c < id < c && m < c - abs(id) || continue
-        v = α * S.v[i]
-        # Avoid branching
-        adj1 = min(id, 0)
-        adj2 = max(id, 0)
-        for j in m+1-adj1:c-adj2
-            for i in 1:r
-                C[i,j] += v * A[i+id,j]
-            end
-        end
-    end
-    return C
-end
-
-(*)(A::AbstractVecOrMat, S::Shift) = mul!(similar(A), A, S, true, false)
 
 function ==(S1::Shift, S2::Shift)
     length(S1.v) == length(S2.v) || return false
@@ -238,8 +219,9 @@ _unsafe_mul!(C::AbstractMatrix, S::ShiftMap, B::AbstractMatrix, α::Number, β::
     S1.N==S2.N ? ShiftMap(S1.S+S2.S, S1.N) : throw(DimensionMismatch())
 (-)(S1::ShiftMap, S2::ShiftMap) =
     S1.N==S2.N ? ShiftMap(S1.S-S2.S, S1.N) : throw(DimensionMismatch())
-(*)(x::Number, S::ShiftMap) = ShiftMap(x*S.S, S.N)
-(*)(S::ShiftMap, x::Number) = x * S
+(*)(x::Union{Real,Complex}, S::ShiftMap{T}) where T<:Union{Real,Complex} =
+    ShiftMap(x*S.S, S.N)
+(*)(S::ShiftMap{T}, x::Union{Real,Complex}) where T<:Union{Real,Complex} = x * S
 
 function (*)(S1::ShiftMap, S2::ShiftMap)
     check_dim_mul(S1, S2)
@@ -262,9 +244,11 @@ end
 
 (*)(A::UniformScalingMap, S::ShiftMap) = S * A
 
+# Avoid generating LinearMaps.LinearCombination
 (+)(A1::UniformScalingMap, A2::UniformScalingMap) =
     A1.M==A2.M ? UniformScalingMap(A1.λ+A2.λ, A1.M) : throw(DimensionMismatch())
 
+# Avoid generating LinearMaps.CompositeMap
 (*)(A1::UniformScalingMap, A2::UniformScalingMap) =
     A1.M==A2.M ? UniformScalingMap(A1.λ*A2.λ, A1.M) : throw(DimensionMismatch())
 
@@ -289,9 +273,5 @@ function (*)(S::ShiftMap{T}, A::CompositeMap{T}) where T
         return CompositeMap{T}(tuple(A.maps..., S))
     end
 end
-
-convert(::Type{Matrix{TF}}, S::ShiftMap) where TF =
-    diagm(S.N, S.N, (k[1]=>_zdiag(convert(TF, S.S.v[i]), S.N, k...)
-        for (k, i) in S.S.d if S.N-abs(i)>0)...)
 
 zero(S::LinearMap{T}) where T = LinearMap(UniformScaling(zero(T)), size(S,2))

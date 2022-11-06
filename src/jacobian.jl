@@ -111,6 +111,9 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     excluded !== nothing && vo in excluded && continue
                     mj = get(parts[vo], vi, nothing)
                     mj === nothing && continue
+                    # Determine whether mj involves array input/output variable
+                    # Length of array input/output could be 1
+                    issc = !(varvals[vi] isa AbstractArray || varvals[vo] isa AbstractArray)
                     # Handle the case when vi is a source of the DAG
                     unknown = get(totals, vi, nothing)
                     # If vi is not a source
@@ -121,9 +124,8 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                             if maplast !== nothing
                                 # Maps from multiple temporal terms are already summed in mj
                                 # maplast could be a row vector
-                                if length(mj) == 1 &&
-                                        !(maplast isa MatOfMap || maplast isa MatMulMap) &&
-                                        mj isa Matrix
+                                if issc && mj isa Matrix &&
+                                        !(maplast isa MatOfMap || maplast isa MatMulMap)
                                     mcomp = mj[1] * maplast
                                     # Combine possibly multiple channels
                                     map0 = get(d, vo, nothing)
@@ -145,7 +147,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets,
                     else
                         # Combine possibly multiple channels
                         map0 = get(unknown, vo, nothing)
-                        if length(mj) == 1 && mj isa Matrix
+                        if issc && mj isa Matrix
                             if map0 === nothing
                                 unknown[vo] = mj[1]
                             elseif map0 isa Matrix
@@ -349,11 +351,12 @@ function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     # endovar does not have to be a source but must have been encountered by tjac
     endovar in GJ.tjac.vars ||
         throw(ArgumentError("$endovar is not an endogenous variable"))
-    nexo = length(GJ.tjac.varvals[exovar])
-    nendo = length(GJ.tjac.varvals[endovar])
     nT = GJ.nTfull
     zmap = LinearMap(UniformScaling(zero(TF)), nT)
-    if nendo > 1 || nexo > 1
+    if GJ.tjac.varvals[exovar] isa AbstractArray ||
+            GJ.tjac.varvals[endovar] isa AbstractArray
+        nexo = length(GJ.tjac.varvals[exovar])
+        nendo = length(GJ.tjac.varvals[endovar])
         M = Matrix{LinearMap{TF}}(undef, nendo, nexo)
         fill!(M, zmap)
     else

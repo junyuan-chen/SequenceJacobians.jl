@@ -30,6 +30,13 @@
     @test MMr1.lmap === nothing
     @test MMr1.amap === nothing
 
+    MMr2 = mapmatmul(A, MMr)
+    @test size(MMr2) == (2, 2)
+    @test MMr2.A === A
+    @test MMr2.rmap === MMr
+    @test MMr2.lmap === nothing
+    @test MMr2.amap === nothing
+
     X1 = rand(3)
     mul!(C, MMr1, X1)
     @test C ≈ [m; m] * U1 * X1
@@ -80,6 +87,18 @@
     mul!(C1, MM, X1)
     @test C1 ≈ [U U] * [m m; m m] * [U U; U U] * [U U; U U] * [m m; m m] * [U; U] * X1
 
+    A11 = Matrix{WrappedMap}(undef, 1, 1)
+    fill!(A11, M)
+    MM11 = mapmatmul(A11, U)
+    @test MM11.A === A11
+    @test MM11.rmap[1] === U
+    MM11a = U + MM11
+    @test MM11a.amap[1] === U
+
+    @test mapmatmul(nothing, A) === A
+    @test mapmatmul(nothing, MMr) === MMr
+    @test mapmatmul(A, nothing) === A
+    @test mapmatmul(MMr, nothing) === MMr
     @test mapmatmul(nothing, nothing) === nothing
 
     MMra1 = MMr + B
@@ -117,4 +136,7 @@
 
     Mat = Matrix(MMra3)
     @test mul!(C2, Mat, X) ≈ mul!(C, MMra3, X)
+
+    C = rand(6, 6)
+    @test _unsafe_mul!(C, MMr, false) == zeros(6, 6)
 end

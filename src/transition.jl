@@ -1,7 +1,8 @@
-const ValidPathInput{TF<:AbstractFloat} = Union{Pair{Symbol,<:AbstractVecOrMat{TF}},
-    Vector{<:Pair{Symbol,<:AbstractVecOrMat{TF}}},
-    Dict{Symbol,<:AbstractVecOrMat{TF}}}
-const PathType{TF<:AbstractFloat} = Union{TF,Pair{Int,Vector{TF}},Pair{Int,Matrix{TF}}}
+# Do not restrict the dimension of arrays
+const ValidPathInput{TF} = Union{Pair{Symbol,<:AbstractArray{TF}},
+    Vector{<:Pair{Symbol,<:AbstractArray{TF}}},
+    Dict{Symbol,<:AbstractArray{TF}}} where TF<:AbstractFloat
+const PathType{TF} = Union{TF,Pair{Int,Vector{TF}},Pair{Int,Matrix{TF}}} where TF<:AbstractFloat
 
 struct Transition{TF<:AbstractFloat}
     tjac::TotalJacobian{TF}
