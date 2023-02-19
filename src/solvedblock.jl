@@ -13,7 +13,7 @@ end
 
 block(b::SimpleBlock, Js::Dict{Int,<:Matrix}) = SolvedBlock(b, Js)
 block(b::HetBlock, ca::HetAgentJacCache) = SolvedBlock(b, ca)
-block(b::CombinedBlock, GJ::GEJacobian) = SolvedBlock(b, GJ)
+block(b::CombinedBlock, gj::GEJacobian) = SolvedBlock(b, gj)
 block(b::CombinedBlock{0}, J::TotalJacobian) = SolvedBlock(b, J)
 
 invars(b::SolvedBlock) = invars(b.blk)
@@ -32,7 +32,7 @@ jacobian(b::SolvedBlock{<:SimpleBlock}, ::Val{i}, nT::Int, varvals::NamedTuple) 
     b.jac[i]
 
 _getnT(ca::HetAgentJacCache) = ca.nT
-_getnT(GJ::GEJacobian) = GJ.tjac.nT
+_getnT(gj::GEJacobian) = gj.tjac.nT
 _getnT(J::TotalJacobian) = J.nT
 
 function jacobian(b::SolvedBlock, nT::Int, varvals::NamedTuple) where TF

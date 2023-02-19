@@ -155,3 +155,6 @@ Replace any element in `a` that is smaller than `amin` with `amin`.
         a[i] = ifelse(ai<amin, amin, ai)
     end
 end
+
+# An alternative to reshape that does not allocate
+_reshape(A::AbstractArray, dims::Int...) = ReshapedArray(A, dims, ())

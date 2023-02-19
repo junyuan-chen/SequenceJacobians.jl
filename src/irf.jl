@@ -1,6 +1,6 @@
 # Methods for linirf
-function _transform!(d::Dict, trans::Vector{Symbol}, GJ::GEJacobian)
-    varvals = GJ.tjac.varvals
+function _transform!(d::Dict, trans::Vector{Symbol}, gj::GEJacobian)
+    varvals = gj.tjac.varvals
     for irfs in values(d)
         for v in trans
             irf = get(irfs, v, nothing)
@@ -13,9 +13,9 @@ function _transform!(d::Dict, trans::Vector{Symbol}, GJ::GEJacobian)
     end
 end
 
-function _transform!(d::Dict, trans::Bool, GJ::GEJacobian)
+function _transform!(d::Dict, trans::Bool, gj::GEJacobian)
     if trans
-        varvals = GJ.tjac.varvals
+        varvals = gj.tjac.varvals
         for irfs in values(d)
             for (v, irf) in irfs
                 ss = varvals[v]
@@ -26,28 +26,28 @@ function _transform!(d::Dict, trans::Bool, GJ::GEJacobian)
     end
 end
 
-function linirf(GJ::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing;
+function linirf(gj::GEJacobian{TF}, dshocks::ValidPathInput, endovars=nothing;
         transform=false) where TF
-    tjac = GJ.tjac
+    tjac = gj.tjac
     dshocks isa Pair && (dshocks = (dshocks,))
     endovars isa Symbol && (endovars = (endovars,))
-    endovars === nothing && (endovars = setdiff(tjac.vars, GJ.exovars, tjac.tars))
+    endovars === nothing && (endovars = setdiff(tjac.vars, gj.exovars, tjac.tars))
     isempty(endovars) && throw(ArgumentError("endovars cannot be empty"))
-    nT = GJ.nTfull
+    nT = gj.nTfull
     out = Dict{Symbol,Dict{Symbol,VecOrMat{TF}}}()
     for (exo, dZ) in dshocks
         size(dZ,1) == nT || throw(ArgumentError("the length of shock $exo is not $nT"))
         d = Dict{Symbol,VecOrMat{TF}}()
         out[exo] = d
         for endo in endovars
-            M = getM!(GJ, exo, endo)
+            M = getM!(gj, exo, endo)
             dZ isa Vector || (dZ = view(dZ,:))
             r = M * dZ
             length(r) == nT || (r = reshape(r, nT, length(r)÷nT))
             d[endo] = r
         end
     end
-    _transform!(out, transform, GJ)
+    _transform!(out, transform, gj)
     return out
 end
 
@@ -55,9 +55,9 @@ function linirf(tjac::TotalJacobian, dshocks::ValidPathInput, endovars=nothing;
         transform=false, keepH_U::Bool=false)
     dshocks isa Pair && (dshocks = (dshocks,))
     exovars = (exo for (exo, _) in dshocks)
-    GJ = GEJacobian(tjac, exovars; keepH_U=keepH_U)
-    irfs = linirf(GJ, dshocks isa Tuple ? dshocks[1] : dshocks, endovars; transform=transform)
-    return irfs, GJ
+    gj = GEJacobian(tjac, exovars; keepH_U=keepH_U)
+    irfs = linirf(gj, dshocks isa Tuple ? dshocks[1] : dshocks, endovars; transform=transform)
+    return irfs, gj
 end
 
 # Methods for nlirf

@@ -343,27 +343,27 @@ end
 _resizemap(m::UniformScalingMap, nT) = UniformScalingMap(m.λ, nT)
 _resizemap(m::ShiftMap, nT) = UniformScalingMap(m.S.v[1], nT)
 
-function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
-    haskey(GJ.Gs, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
-    Gz = GJ.Gs[exovar]
+function getG!(gj::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
+    haskey(gj.Gs, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
+    Gz = gj.Gs[exovar]
     # G is readily available if endovar is a source
     haskey(Gz, endovar) && return Gz[endovar]
     # endovar does not have to be a source but must have been encountered by tjac
-    endovar in GJ.tjac.vars ||
+    endovar in gj.tjac.vars ||
         throw(ArgumentError("$endovar is not an endogenous variable"))
-    nT = GJ.nTfull
+    nT = gj.nTfull
     zmap = LinearMap(UniformScaling(zero(TF)), nT)
-    if GJ.tjac.varvals[exovar] isa AbstractArray ||
-            GJ.tjac.varvals[endovar] isa AbstractArray
-        nexo = length(GJ.tjac.varvals[exovar])
-        nendo = length(GJ.tjac.varvals[endovar])
+    if gj.tjac.varvals[exovar] isa AbstractArray ||
+            gj.tjac.varvals[endovar] isa AbstractArray
+        nexo = length(gj.tjac.varvals[exovar])
+        nendo = length(gj.tjac.varvals[endovar])
         M = Matrix{LinearMap{TF}}(undef, nendo, nexo)
         fill!(M, zmap)
     else
         M = zmap
     end
     # M_U combines all indirect effects while M_u is for a specific channel
-    for (src, ms) in GJ.tjac.totals
+    for (src, ms) in gj.tjac.totals
         # Direct effect of exovar M_Z
         if src === exovar
             if haskey(ms, endovar)
@@ -383,7 +383,7 @@ function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
                 end
             end
         # Indirect effect via unknowns M_U
-        elseif src in GJ.unknowns
+        elseif src in gj.unknowns
             if haskey(ms, endovar)
                 M_u = ms[endovar]
                 if M_u isa LinearMap
@@ -408,11 +408,11 @@ function getG!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
     return M
 end
 
-function getM!(GJ::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
-    haskey(GJ.Ms, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
-    Mz = GJ.Ms[exovar]
+function getM!(gj::GEJacobian{TF}, exovar::Symbol, endovar::Symbol) where TF
+    haskey(gj.Ms, exovar) || throw(ArgumentError("$exovar is not an exogenous variable"))
+    Mz = gj.Ms[exovar]
     haskey(Mz, endovar) && return Mz[endovar]
-    G = getG!(GJ, exovar, endovar)
+    G = getG!(gj, exovar, endovar)
     if G isa LinearMap
         M = Matrix(G)
     else # Matrix of LinearMaps

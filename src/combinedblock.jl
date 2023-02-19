@@ -126,13 +126,13 @@ function jacobian(b::CombinedBlock, nT::Int, varvals::NamedTuple)
         excluded=excluded)
     keepH_U = get(b.jacargs, :keepH_U, false)::Bool
     keepfactor = get(b.jacargs, :keepfactor, false)::Bool
-    GJ = GEJacobian(J, ins; keepH_U=keepH_U, keepfactor=keepfactor, nTfull=nTfull)
+    gj = GEJacobian(J, ins; keepH_U=keepH_U, keepfactor=keepfactor, nTfull=nTfull)
     for vi in ins
         for vo in outs
-            getG!(GJ, vi, vo)
+            getG!(gj, vi, vo)
         end
     end
-    return GJ
+    return gj
 end
 
 function jacobian(b::CombinedBlock{0}, nT::Int, varvals::NamedTuple)

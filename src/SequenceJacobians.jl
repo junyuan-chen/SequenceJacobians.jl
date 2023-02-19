@@ -1,30 +1,38 @@
 module SequenceJacobians
 
-using Base: RefValue
-using FFTW: rfft, irfft
+using AutoregressiveModels: ARMAProcess
+using Base: RefValue, ReshapedArray
+using Distributions
+using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
 using FiniteDiff: finite_difference_gradient!, finite_difference_jacobian!,
     GradientCache, default_relstep
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, Factorization, LU, lu!,
     cholesky!, ldiv!, norm, dot, stride1, diag
 using LinearMaps: WrappedMap
+using LogDensityProblems: LogDensityOrder
 using MacroTools
 using MacroTools: postwalk
 using Requires
 using SplitApplyCombine: splitdimsview
 using Statistics: mean
+using Tables
 using Tullio: @tullio
 
+import AutoregressiveModels: simulate!, simulate, impulse!, impulse
 import Base: ==, eltype, zero, show, convert, Matrix
 import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
 import LinearMaps: check_dim_mul
+import LogDensityProblems: capabilities, dimension, logdensity, logdensity_and_gradient
 
 # Reexport
+export ARMAProcess, simulate!, simulate, impulse!, impulse
 export solve!
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
+export dimension
 
 export supconverged,
        interpolate_y!,
@@ -157,15 +165,29 @@ export supconverged,
        nlirf,
        astable,
 
+       AbstractAllCovCache,
+       FFTWAllCovCache,
        allcov!,
        allcov,
        allcor!,
        allcor,
        correlogram!,
        correlogram,
-       simulate!,
-       simulate,
-       loglikelihood!
+       loglikelihood!,
+
+       ShockProcess,
+       shockse,
+       ar1shock,
+       arma11shock,
+
+       BayesianModel,
+       bayesian,
+       nshock,
+       nshockpara,
+       nmodelpara,
+       logprior,
+       logposterior!,
+       logposterior_and_gradient!
 
 include("utils.jl")
 include("shift.jl")
@@ -182,7 +204,9 @@ include("solvedblock.jl")
 include("macros.jl")
 include("transition.jl")
 include("irf.jl")
-include("estimation.jl")
+include("allcov.jl")
+include("shock.jl")
+include("bayesian.jl")
 include("examples/utils.jl")
 include("examples/rbc.jl")
 include("examples/KrusellSmith.jl")

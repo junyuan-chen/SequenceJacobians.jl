@@ -2,11 +2,12 @@ module KrusellSmith
 
 using ..SequenceJacobians
 using ..SequenceJacobians.RBC: firm_blk
+using ..SequenceJacobians.Distributions
 
 import SequenceJacobians: endoprocs, exogprocs, valuevars, expectedvalues, policies,
     backwardtargets, backward_init!, backward_endo!
 
-export KSHousehold, kshhblock, ksblocks
+export KSHousehold, kshhblock, ksblocks, kspriors
 
 struct KSHousehold{TF<:AbstractFloat} <: AbstractHetAgent
     aproc::EndoProc{TF,2}
@@ -86,6 +87,13 @@ function ksblocks(; hhkwargs...)
     bfirm = firm_blk()
     bmkt = block(mkt_clearing, [:K, :A, :Y, :C, :δ], [:asset_mkt, :goods_mkt])
     return bhh, bfirm, bmkt
+end
+
+function kspriors()
+    sh = arma11shock(:σ, :ar, :ma, :Z)
+    priors = [:σ=>InverseGamma(2.01, 0.4*(2.01-1)),
+        :ar=>Beta(2.625, 2.625), :ma=>Beta(2.625, 2.625)]
+    return sh, priors
 end
 
 end

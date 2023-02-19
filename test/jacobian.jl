@@ -29,24 +29,24 @@
               sources: K, L, Z
               targets: euler, goods_mkt"""
 
-        GJ = GEJacobian(J, :Z, keepH_U=true)
+        gj = GEJacobian(J, :Z, keepH_U=true)
         # Compare results with original Python package
-        @test GJ.H_U[1,1] ≈ 0.04863451461425212 atol=1e-7
-        @test GJ.H_U[2,1] ≈ -0.03798449612403101 atol=1e-7
-        @test GJ.H_U[301,1] ≈ -1
-        @test GJ.H_U[302,1] ≈ 0.97775 atol=1e-7
-        @test GJ.H_U[1,301] ≈ 1.2046511627906977 atol=1e-7
-        @test GJ.H_U[1,302] ≈ -1.2381226494742499 atol=1e-7
-        @test GJ.H_U[600,600] ≈ 1.912785714285714 atol=1e-7
+        @test gj.H_U[1,1] ≈ 0.04863451461425212 atol=1e-7
+        @test gj.H_U[2,1] ≈ -0.03798449612403101 atol=1e-7
+        @test gj.H_U[301,1] ≈ -1
+        @test gj.H_U[302,1] ≈ 0.97775 atol=1e-7
+        @test gj.H_U[1,301] ≈ 1.2046511627906977 atol=1e-7
+        @test gj.H_U[1,302] ≈ -1.2381226494742499 atol=1e-7
+        @test gj.H_U[600,600] ≈ 1.912785714285714 atol=1e-7
 
-        @test sprint(show, GJ) == "GEJacobian{Float64}"
-        @test sprint(show, MIME("text/plain"), GJ) == """
+        @test sprint(show, gj) == "GEJacobian{Float64}"
+        @test sprint(show, MIME("text/plain"), gj) == """
             GEJacobian{Float64} with 300 periods:
               exogenous:  Z
               endogenous: K, L
               targets:    euler, goods_mkt"""
 
-        G = Matrix(getG!(GJ, :Z, :C))
+        G = Matrix(getG!(gj, :Z, :C))
         # Compare results with original Python package
         @test G[1,1] ≈ 0.15969857749115557 atol=1e-7
         @test G[2,1] ≈ 0.14155046602609384 atol=1e-7
@@ -62,14 +62,14 @@
         ss =  SteadyState(m, calis, inits, tars)
         solve!(GSL_Hybrids, ss, xtol=1e-10)
         J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
-        GJ = GEJacobian(J, :Z, keepH_U=true)
-        G = getM!(GJ, :Z, :C)
+        gj = GEJacobian(J, :Z, keepH_U=true)
+        G = getM!(gj, :Z, :C)
         # Compare results with original Python package
         # Need to specify twosided=True in the Python package
         @test G[1,1:3] ≈ [2.10710661e-1, 6.58615809e-2, 5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [3.71126268e-2, 4.08907393e-2, 1.44162837e-1] atol=1e-6
 
-        G = getM!(GJ, :Z, :K)
+        G = getM!(gj, :Z, :K)
         @test G[1,1:3] ≈ [9.23531301e-1, -6.58615809e-2, -5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [7.63355815e-1,  8.39331787e-1,  9.22957992e-1] atol=1e-5
     end

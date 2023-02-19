@@ -2,7 +2,10 @@ using Test
 using SequenceJacobians
 
 using Base: has_offset_axes
+using CSV
 using CodecZlib: GzipDecompressorStream
+using DataFrames
+using Distributions
 using GSL
 using JSON3
 using LinearAlgebra
@@ -19,7 +22,10 @@ if VERSION >= v"1.7"
     using OpenBLAS32_jll
 end
 
-function loadjson(name::String)
+exampledata(name::Union{Symbol,String}) =
+    CSV.read(pkgdir(SequenceJacobians)*"/data/$name.csv.gz", DataFrame)
+
+function loadjson(name::Union{Symbol,String})
     stream = open(pkgdir(SequenceJacobians)*"/data/$name.json.gz") |> GzipDecompressorStream
     return copy(JSON3.read(read(stream, String)))
 end
@@ -36,7 +42,8 @@ const tests = [
     "irf",
     "twoasset",
     "Horvath",
-    "estimation"
+    "estimation",
+    "bayesian"
 ]
 
 printstyled("Running tests:\n", color=:blue, bold=true)
