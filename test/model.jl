@@ -49,6 +49,7 @@ end
         @test arrayinputs(ss) == ()
         @test scalartargets(ss) == (:Y, :r, :euler, :goods_mkt)
         @test arraytargets(ss) == ()
+        @test ss[] == ss.varvals[]
 
         f(x) = criterion!(ss, x)
         f!(y,x) = residuals!(y, ss, x)
@@ -56,10 +57,10 @@ end
         # Compare results with original Python package
         @test r[1] ≈ [0.9900990099009883, 0.9658914728682162, 0.8816460975214576,
             3.1428571428570864] atol=1e-8
-        @test getval(ss, :φ) ≈ 0.9658914728682162 atol=1e-8
-        @test getval(ss, :β) ≈ 0.9900990099009883 atol=1e-8
-        @test getval(ss, :K) ≈ 3.1428571428570864 atol=1e-8
-        @test getval(ss, :Z) ≈ 0.8816460975214576 atol=1e-8
+        @test ss[:φ] ≈ 0.9658914728682162 atol=1e-8
+        @test ss[:β] ≈ 0.9900990099009883 atol=1e-8
+        @test ss[:K] ≈ 3.1428571428570864 atol=1e-8
+        @test ss[:Z] ≈ 0.8816460975214576 atol=1e-8
 
         @test_throws ArgumentError solve!(Roots_Default, ss)
     end
@@ -74,11 +75,11 @@ end
         @test targets(ss) == (:Y, :r, :asset_mkt)
         solve!(GSL_Hybrids, ss, xtol=1e-10)
         # Compare results with original Python package
-        @test getval(ss, :β) ≈ 0.981952788061795 atol=1e-8
-        @test getval(ss, :Z) ≈ 0.8816460975214567 atol=1e-8
-        @test getval(ss, :K) ≈ 3.142857142857143 atol=1e-8
+        @test ss[:β] ≈ 0.981952788061795 atol=1e-8
+        @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8
+        @test ss[:K] ≈ 3.142857142857143 atol=1e-8
         # Results returned by the solver may be the guess for the next iteration
-        @test ss.inits ≈ [getval(ss, n) for n in inputs(ss)] atol=1e-8
+        @test ss.inits ≈ [ss[n] for n in inputs(ss)] atol=1e-8
 
         @test sprint(show, ss) == "3×3 SteadyState{Float64}"
         @test sprint(show, MIME("text/plain"), ss) == """
@@ -93,9 +94,9 @@ end
             ss = SteadyState(m, calis, inits, tars)
             solve!(GSL_Hybrids, ss, xtol=1e-10)
             # Compare results with original Python package
-            @test getval(ss, :β) ≈ 0.981952788061795 atol=1e-8
-            @test getval(ss, :Z) ≈ 0.8816460975214567 atol=1e-8
-            @test getval(ss, :K) ≈ 3.142857142857143 atol=1e-8
+            @test ss[:β] ≈ 0.981952788061795 atol=1e-8
+            @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8
+            @test ss[:K] ≈ 3.142857142857143 atol=1e-8
             Main.backwardsolver(::KSHousehold) = nothing
             Main.forwardsolver(::KSHousehold) = NLsolve_anderson
             m = model(ksblocks())
@@ -104,9 +105,9 @@ end
             ss = SteadyState(m, calis, inits, tars)
             solve!(GSL_Hybrids, ss, xtol=1e-10)
             # Compare results with original Python package
-            @test getval(ss, :β) ≈ 0.981952788061795 atol=1e-8
-            @test getval(ss, :Z) ≈ 0.8816460975214567 atol=1e-8
-            @test getval(ss, :K) ≈ 3.142857142857143 atol=1e-7
+            @test ss[:β] ≈ 0.981952788061795 atol=1e-8
+            @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8
+            @test ss[:K] ≈ 3.142857142857143 atol=1e-7
             Main.forwardsolver(::KSHousehold) = nothing
         end
     end

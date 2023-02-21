@@ -2,11 +2,11 @@
     ss = rbcss()
     f!(y,x) = residuals!(y, ss, x)
     solve!(GSL_Hybrids, ss, xtol=1e-10)
-    J = TotalJacobian(model(ss), [:Z,:K,:L], [:euler, :goods_mkt], getvarvals(ss), 300)
+    J = TotalJacobian(model(ss), [:Z,:K,:L], [:euler, :goods_mkt], ss[], 300)
     gj = GEJacobian(J, :Z)
 
     dZ = zeros(300)
-    dZ[11:end] .= getvarvals(ss)[:Z] .* 0.01 .* 0.8.^(0:289)
+    dZ[11:end] .= ss[:Z] .* 0.01 .* 0.8.^(0:289)
     irfs = linirf(gj, :Z=>dZ)
     dC = irfs[:Z][:C]
     # Compare results with original Python package

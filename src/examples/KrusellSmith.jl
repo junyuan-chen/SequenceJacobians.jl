@@ -2,7 +2,7 @@ module KrusellSmith
 
 using ..SequenceJacobians
 using ..SequenceJacobians.RBC: firm_blk
-using ..SequenceJacobians.Distributions
+using Distributions
 
 import SequenceJacobians: endoprocs, exogprocs, valuevars, expectedvalues, policies,
     backwardtargets, backward_init!, backward_endo!

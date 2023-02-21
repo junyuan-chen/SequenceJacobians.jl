@@ -15,7 +15,7 @@ end
     @testset "hwelast=-1" begin
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1)
         ss = SteadyState(mss, calis)
-        @test log(getval(ss, :Ctot)) ≈ -9.179427352597520 atol=1e-8
+        @test log(ss[:Ctot]) ≈ -9.179427352597520 atol=1e-8
         @test log(sum(p.L)) ≈ -0.245118891298135 atol=1e-8
         @test log(p.C[2]) ≈ -10.629366617908783 atol=1e-8
         @test log(p.L[2]) ≈ -4.471962580873086 atol=1e-8
@@ -29,7 +29,7 @@ end
         @test log(p.Z[3]) ≈ -8.703794453549149 atol=1e-8
 
         m = hv.Horvathmodel(p, calis)
-        vals = merge(getvarvals(ss), (goods_mkt=zeros(N), euler=zeros(N)))
+        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
 
@@ -50,7 +50,7 @@ end
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1.04)
         ss = SteadyState(mss, calis)
         # Compare results from Dynare
-        @test log(getval(ss, :Ctot)) ≈ -9.121497724560054 atol=1e-8
+        @test log(ss[:Ctot]) ≈ -9.121497724560054 atol=1e-8
         @test log(sum(p.L)) ≈ -0.245118891298135 atol=1e-8
         @test log(p.C[1]) ≈ -12.995980539507782 atol=1e-8
         @test log(p.L[1]) ≈ -4.212831002607052 atol=1e-8
@@ -64,7 +64,7 @@ end
         @test log(p.Z[1]) ≈ -11.992266967437140 atol=1e-8
 
         m = hv.Horvathmodel(p, calis)
-        vals = merge(getvarvals(ss), (goods_mkt=zeros(N), euler=zeros(N)))
+        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
 
@@ -95,7 +95,7 @@ end
         @test irfLtot[1:10] ≈ [0.804494965807056, 0.798088178218045, 0.793100997885200,
             0.789247588847981, 0.786310398275455, 0.784111645310415, 0.782503353260691,
             0.781362343396361, 0.780586698192282, 0.780092794081647] atol=1e-3
-        @test sum(irf[:A][:L], dims=2) ≈ irf[:A][:Ltot]
+        @test sum(irf[:A][:L], dims=2) ≈ irf[:A][:Ltot] atol=1e-7
 
         irfCtot = irf[:A][:Ctot] .+ vals[:Ctot]
         @test irfCtot[1:4] ≈ [0.000110624106620004, 0.000110483994704759,

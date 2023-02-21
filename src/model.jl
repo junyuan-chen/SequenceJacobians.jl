@@ -280,14 +280,15 @@ arraytargets(::SteadyState{TF,NT,BLK,scins,arins,sctars,artars}) where
     {TF,NT,BLK,scins,arins,sctars,artars} = artars
 
 model(ss::SteadyState) = ss.parent
-getvarvals(ss::SteadyState) = ss.varvals[]
-getval(ss::SteadyState, n::Symbol) = getvarvals(ss)[n]
 inputs(ss::SteadyState) = (scalarinputs(ss)..., arrayinputs(ss)...)
 inlength(ss::SteadyState) = length(ss.inits)
 targets(ss::SteadyState) = (scalartargets(ss)..., arraytargets(ss)...)
 tarlength(ss::SteadyState) = length(ss.tars)
 hastarget(ss::SteadyState) = tarlength(ss) > 0
 hastarget(ss::SteadyState, v::Symbol) = haskey(ss.targets, v)
+
+getindex(ss::SteadyState) = ss.varvals[]
+getindex(ss::SteadyState, i) = getindex(ss[], i)
 
 function _inputs!(varvals::NT, ss::SteadyState{TF,NT}, inputs::AbstractVector) where {TF,NT}
     scins = scalarinputs(ss)
@@ -326,7 +327,7 @@ end
 
 function residuals!(resids::AbstractVector, ss::SteadyState{TF,NT,BLK}, inputs::AbstractVector) where {TF,NT,BLK}
     if @generated
-        ex = :(_inputs!(getvarvals(ss), ss, inputs))
+        ex = :(_inputs!(ss[], ss, inputs))
         for i in 1:length(BLK.parameters)
             ex = :(steadystate!(blks[$i], $ex))
         end
@@ -338,7 +339,7 @@ function residuals!(resids::AbstractVector, ss::SteadyState{TF,NT,BLK}, inputs::
         end
         return ex
     else
-        varvals = _inputs!(getvarvals(ss), ss, inputs)
+        varvals = _inputs!(ss[], ss, inputs)
         for b in ss.blks
             varvals = steadystate!(b, varvals)
         end
@@ -366,7 +367,7 @@ function solve!(ST::Type, ss::SteadyState; keepinits::Bool=false, kwargs...)
     r = solve!(ST, f!, ss.inits; kwargs...)
     # Results returned by the solver may be the guess for the next iteration
     keepinits || copyto!(ss.inits, r[1])
-    return getvarvals(ss)
+    return ss[]
 end
 
 function solve!(ca, ss::SteadyState; keepinits::Bool=false, kwargs...)
@@ -374,20 +375,20 @@ function solve!(ca, ss::SteadyState; keepinits::Bool=false, kwargs...)
         return solve!(typeof(ca), ss; keepinits=keepinits, kwargs...)
     r = solve!(ca, ss.inits; kwargs...)
     keepinits || copyto!(ss.inits, r[1])
-    return getvarvals(ss)
+    return ss[]
 end
 
 function solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
         kwargs...) where {TF,NT,BLK}
     # Update the values without solving for any target
     if @generated
-        ex = :(getvarvals(ss))
+        ex = :(ss[])
         for i in 1:length(BLK.parameters)
             ex = :(steadystate!(blks[$i], $ex))
         end
         return :(blks = ss.blks; varvals = $ex; ss.varvals[] = varvals; varvals)
     else
-        varvals = getvarvals(ss)
+        varvals = ss[]
         for b in ss.blks
             varvals = steadystate!(b, varvals)
         end

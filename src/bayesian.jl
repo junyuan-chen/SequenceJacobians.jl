@@ -1,9 +1,9 @@
 struct BayesianModel{NT<:NamedTuple, PR<:Tuple, SH<:Tuple, TF<:AbstractFloat,
         GJ<:GEJacobian{TF}, TC<:AbstractAllCovCache, TE<:Union{AbstractVector{TF},Nothing},
-        GC<:GradientCache, FDA<:NamedTuple, N1, N2, N3}
+        GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple, N1, N2, N3}
     shockses::NTuple{N1,Symbol}
     shockparas::NTuple{N2,Symbol}
-    modelparas::NTuple{N3,Symbol}
+    strucparas::NTuple{N3,Symbol}
     priors::PR
     lookuppara::Dict{Symbol,NTuple{3,Int}}
     observables::Vector{Pair}
@@ -24,6 +24,8 @@ struct BayesianModel{NT<:NamedTuple, PR<:Tuple, SH<:Tuple, TF<:AbstractFloat,
     Tobs::Int
     dl::Vector{TF}
     dlcache::GC
+    d2l::Matrix{TF}
+    d2lcache::HC
     fdkwargs::FDA
 end
 
@@ -151,25 +153,25 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
         end
     end
     shockparas = (shockparas...,)
-    nshpara = length(lookuppara) - nsh
+    nshpara = length(lookuppara)
     for k in keys(lookuppara)
         k in gj.tjac.vars && throw(ArgumentError(
-            "shock parameter $k coincides with a model parameter"))
+            "name of shock parameter $k coincides with a structural parameter"))
     end
     i1 = 0
     priors isa Pair && (priors = (priors,))
     npara = length(priors)
     vpriors = Vector{Distribution}(undef, npara)
-    modelparas = Vector{Symbol}(undef, npara-length(lookuppara))
+    strucparas = Vector{Symbol}(undef, npara-length(lookuppara))
     for (v, p) in priors
         tp = get(lookuppara, v, nothing)
         if tp === nothing
             v in gj.tjac.vars || throw(ArgumentError(
                 "$v is not a parameter reachable by the GEJacobian"))
             i1 += 1
-            i2 = nsh+nshpara+i1
+            i2 = nshpara + i1
             vpriors[i2] = p
-            modelparas[i1] = v
+            strucparas[i1] = v
             lookuppara[v] = (2, i1, i2)
         else
             _, _, i2 = tp
@@ -177,8 +179,8 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
         end
     end
     priors = (vpriors...,)
-    modelparas = (modelparas...,)
-    paras = (shockses..., shockparas..., modelparas...)
+    strucparas = (strucparas...,)
+    paras = (shockses..., shockparas..., strucparas...)
     paravals = NamedTuple{paras}(map(mean, priors))
     observables isa Union{Symbol, Pair} && (observables = (observables,))
     obs, lookupobs = _check_observables(gj, observables)
@@ -197,14 +199,30 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
     dl = Vector{TF}(undef, npara)
     dlcache = GradientCache{TF,Nothing,Nothing,Vector{TF},fdtype,TF,Val(true)}(
         zero(TF), nothing, nothing, similar(dl))
-    return BayesianModel(shockses, shockparas, modelparas, priors, lookuppara,
+    d2l = Matrix{TF}(undef, npara, npara)
+    d2lcache = HessianCache{Vector{TF},Val(:hcentral),Val(true)}(
+        similar(dl), similar(dl), similar(dl), similar(dl))
+    return BayesianModel(shockses, shockparas, strucparas, priors, lookuppara,
         obs, lookupobs, Ref(paravals), gj, shocks, Z, G, GZ, SE,
-        allcovcache, V, measurement_error, Y, Ycache, nT, Tobs, dl, dlcache, fdkwargs)
+        allcovcache, V, measurement_error, Y, Ycache, nT, Tobs,
+        dl, dlcache, d2l, d2lcache, fdkwargs)
 end
 
-nshock(bm::BayesianModel) = typeof(bm).parameters[10]
-nshockpara(bm::BayesianModel) = typeof(bm).parameters[11]
-nmodelpara(bm::BayesianModel) = typeof(bm).parameters[12]
+nshock(bm::BayesianModel) = typeof(bm).parameters[11]
+nshockpara(bm::BayesianModel) = typeof(bm).parameters[12] + nshock(bm)
+nstrucpara(bm::BayesianModel) = typeof(bm).parameters[13]
+
+const TransformedBayesianModel{T,L} =
+    TransformedLogDensity{T,L} where {T<:AbstractTransform, L<:BayesianModel}
+const BayesOrTrans = Union{BayesianModel, TransformedBayesianModel}
+
+transform(transformation, bm::BayesianModel) = TransformedLogDensity(transformation, bm)
+
+parent(bm::BayesianModel) = bm
+parent(bm::TransformedBayesianModel) = bm.log_density_function
+
+getindex(bm::BayesOrTrans) = parent(bm).paravals[]
+getindex(bm::BayesOrTrans, i) = getindex(bm[], i)
 
 function logprior(bm::BayesianModel{NT,PR}, θ) where {NT,PR}
     # The generated part avoids allocations for array θ
@@ -223,6 +241,9 @@ function logprior(bm::BayesianModel{NT,PR}, θ) where {NT,PR}
     end
 end
 
+logprior(bm::TransformedBayesianModel, θ) =
+    logprior(parent(bm), transform(bm.transformation, θ))
+
 function _update_paravals!(bm::BayesianModel{NT}, θ::AbstractVector) where NT
     N = length(NT.parameters[1])
     vals = NamedTuple{NT.parameters[1]}(ntuple(i->θ[i], N))
@@ -234,6 +255,11 @@ function _update_paravals!(bm::BayesianModel{NT}, θ::Tuple) where NT
     vals = NamedTuple{NT.parameters[1]}(θ)
     bm.paravals[] = vals
     return vals
+end
+
+function _update_paravals!(bm::BayesianModel{NT}, θ::NT) where NT
+    bm.paravals[] = θ
+    return θ
 end
 
 function loglikelihood!(bm::BayesianModel, θ)
@@ -256,25 +282,157 @@ function loglikelihood!(bm::BayesianModel, θ)
     return loglikelihood!(bm.V, bm.Y, bm.Ycache)
 end
 
+# This method is not used by logposterior!
+loglikelihood!(bm::TransformedBayesianModel, θ) =
+    transform_logdensity(bm.transformation, Base.Fix1(loglikelihood!, parent(bm)), θ)
+
 logposterior!(bm::BayesianModel, θ) = loglikelihood!(bm, θ) + logprior(bm, θ)
+# Does not add the log Jacobian determinant
+logposterior!(bm::TransformedBayesianModel, θ) =
+    logposterior!(parent(bm), transform(bm.transformation, θ))
+
+# Needed for TransformedLogDensity
+(bm::BayesOrTrans)(θ) = logposterior!(bm, θ)
 
 function _update_fdcache(ca::GradientCache{TF,TC1,TC2,TC3,fdtype,TF,Val(true)},
         fx) where {TF,TC1,TC2,TC3,fdtype}
     return GradientCache{TF,TC1,TC2,TC3,fdtype,TF,Val(true)}(fx, ca.c1, ca.c2, ca.c3)
 end
 
-function logposterior_and_gradient!(bm::BayesianModel, θ)
+_resize_fdcache!(ca::GradientCache{<:Any,Nothing,Nothing,<:AbstractVector}, N::Int) =
+    resize!(ca.c3, N)
+
+function logposterior_and_gradient!(bm::BayesOrTrans, θ, grad::AbstractVector)
     l = logposterior!(bm, θ)
-    f = Base.Fix1(logposterior!, bm)
-    ca = _update_fdcache(bm.dlcache, l)
-    finite_difference_gradient!(bm.dl, f, θ, ca; bm.fdkwargs...)
-    return l, bm.dl
+    p = parent(bm)
+    ca = p.dlcache
+    # Transformation could change the dimension
+    dimension(bm) <= length(ca.c3) || _resize_fdcache!(ca, dimension(bm))
+    ca = _update_fdcache(ca, l)
+    finite_difference_gradient!(grad, bm, θ, ca; p.fdkwargs...)
+    return l, grad
 end
 
-capabilities(::Type{<:BayesianModel}) = LogDensityOrder{1}()
+function logposterior_and_gradient!(bm::BayesOrTrans, θ)
+    grad = parent(bm).dl
+    dimension(bm) == length(grad) || resize!(grad, dimension(bm))
+    return logposterior_and_gradient!(bm, θ, grad)
+end
+
+function logposterior_obj!(bm::BayesOrTrans, θ::AbstractVector, grad::AbstractVector)
+    if length(grad) > 0
+        l, grad = logposterior_and_gradient!(bm, θ, grad)
+        return l
+    else
+        return logposterior!(bm, θ)
+    end
+end
+
+capabilities(::Type{<:BayesOrTrans}) = LogDensityOrder{1}()
 dimension(bm::BayesianModel) = length(bm.priors)
 logdensity(bm::BayesianModel, θ) = logposterior!(bm, θ)
+
+# Automatic differentiation is not applicable and hence use FiniteDiff
 function logdensity_and_gradient(bm::BayesianModel, θ)
     l, dl = logposterior_and_gradient!(bm, θ)
     return l, copy(dl)
+end
+
+function logdensity_and_gradient(bm::TransformedBayesianModel, θ)
+    # logdensity adds the log Jacobian determinant for variable transformation
+    l = logdensity(bm, θ)
+    p = parent(bm)
+    grad = parent(bm).dl
+    dimension(bm) == length(grad) || resize!(grad, dimension(bm))
+    f = Base.Fix1(logdensity, bm)
+    ca = p.dlcache
+    dimension(bm) <= length(ca.c3) || _resize_fdcache!(ca, dimension(bm))
+    ca = _update_fdcache(ca, l)
+    finite_difference_gradient!(grad, f, θ, ca; p.fdkwargs...)
+    return l, copy(grad)
+end
+
+_resize_fdcache!(ca::HessianCache, N) =
+    (resize!(ca.xpp, N); resize!(ca.xpm, N); resize!(ca.xmp, N); resize!(ca.xmm, N))
+
+_update_fdcache!(ca::HessianCache, x) =
+    (copyto!(ca.xpp, x); copyto!(ca.xpm, x); copyto!(ca.xmp, x); copyto!(ca.xmm, x))
+
+function logdensity_hessian!(bm::BayesOrTrans, θ, h::AbstractMatrix)
+    p = parent(bm)
+    ca = p.d2lcache
+    # Transformation could change the dimension
+    dimension(bm) <= length(ca.xpp) || _resize_fdcache!(ca, dimension(bm))
+    _update_fdcache!(ca, θ)
+    # Share fdkwargs with gradient for simplicity but their keywords are not identical
+    f = Base.Fix1(logdensity, bm)
+    finite_difference_hessian!(h, f, θ, ca; p.fdkwargs...)
+    return h
+end
+
+function logdensity_hessian!(bm::BayesOrTrans, θ)
+    h = parent(bm).d2l
+    dimension(bm) == size(h,1) || error(DimensionMismatch("cannot use bm.d2l for output"))
+    return logdensity_hessian!(bm, θ, h)
+end
+
+function vcov!(out::AbstractMatrix, bm::BayesOrTrans, θ)
+    p = parent(bm)
+    N = dimension(bm)
+    size(out) == (N, N) || throw(DimensionMismatch("expect the size of out to be ($N, $N)"))
+    logdensity_hessian!(bm, θ, p.d2l)
+    TF = eltype(out)
+    fill!(out, zero(TF))
+    out[diagind(out)] .-= one(TF)
+    # One allocation from lu! cannot be avoided
+    return ldiv!(lu!(p.d2l), out)
+end
+
+vcov(bm::BayesOrTrans, θ) = vcov!(similar(parent(bm).d2l), bm, θ)
+
+function stderror(bm::BayesOrTrans, θ)
+    Σ = vcov(bm, θ)
+    return map(i->@inbounds(sqrt(Σ[i])), diagind(Σ))
+end
+
+show(io::IO, bm::BayesianModel) = print(io, bm.Tobs, '×', length(bm.observables),
+    " BayesianModel(", nshockpara(bm), ", ", nstrucpara(bm), ')')
+
+function show(io::IO, ::MIME"text/plain", bm::BayesianModel)
+    nsh = nshockpara(bm)
+    nstruc = nstrucpara(bm)
+    print(io, bm.Tobs, '×', length(bm.observables),
+        " BayesianModel with ", nsh, " shock parameter")
+    nsh > 1 && print(io, 's')
+    print(io, " and ", nstruc, " structural parameter")
+    nstruc > 1 && print(io, 's')
+    println(io, ":")
+    print(io, "  shock parameter")
+    nsh > 1 && print(io, 's')
+    print(io, ": ")
+    join(io, (bm.shockses..., bm.shockparas...), ", ")
+    if nstruc > 0
+        print(io, "\n  structural parameter")
+        nstruc > 1 && print(io, 's')
+        print(io, ": ")
+        join(io, bm.strucparas, ", ")
+    end
+end
+
+function show(io::IO, bm::TransformedBayesianModel)
+    p = parent(bm)
+    print(io, p.Tobs, '×', length(p.observables),
+        " TransformedBayesianModel(", dimension(bm), ')')
+end
+
+function show(io::IO, ::MIME"text/plain", bm::TransformedBayesianModel)
+    p = parent(bm)
+    nsh = nshockpara(p)
+    nstruc = nstrucpara(p)
+    print(io, p.Tobs, '×', length(p.observables),
+        " TransformedBayesianModel of dimension ", dimension(bm),
+        " from parent model with ", nsh, " shock parameter")
+    nsh > 1 && print(io, 's')
+    print(io, " and ", nstruc, " structural parameter")
+    nstruc > 1 && print(io, 's')
 end

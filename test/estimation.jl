@@ -6,7 +6,7 @@
     inits = [:β=>0.98, :Z=>0.85, :K=>3]
     ss =  SteadyState(m, calis, inits, tars)
     solve!(GSL_Hybrids, ss, xtol=1e-10)
-    J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
+    J = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
     gj = GEJacobian(J, :Z)
 
     @testset "allcov allcor correlogram" begin
@@ -36,6 +36,7 @@
         @test out ≈ Σ
         allcov!(out, ca, dX)
         @test out ≈ Σ1
+        @test sprint(show, ca) == "FFTWAllCovCache"
 
         corr = allcor(dX, σ)
         @test corr[1,1,:] ≈ [1.0, 0.99469738, 0.78762659, 0.60438467] atol=1e-6

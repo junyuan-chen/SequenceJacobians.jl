@@ -8,7 +8,7 @@
         ss = SteadyState(m, calis, inits, tars)
         f!(y,x) = residuals!(y, ss, x)
         solve!(GSL_Hybrids, ss, xtol=1e-10)
-        J = TotalJacobian(m, [:Z,:K,:L], [:euler, :goods_mkt], getvarvals(ss), 300, excluded=(:walras,))
+        J = TotalJacobian(m, [:Z,:K,:L], [:euler, :goods_mkt], ss[], 300, excluded=(:walras,))
 
         JK = J.totals[:K]
         @test JK[:w].S.v ≈ [0.03115] atol=1e-7
@@ -61,7 +61,7 @@
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
         ss =  SteadyState(m, calis, inits, tars)
         solve!(GSL_Hybrids, ss, xtol=1e-10)
-        J = TotalJacobian(m, [:Z,:K], [:asset_mkt], getvarvals(ss), 300, excluded=(:goods_mkt,))
+        J = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
         gj = GEJacobian(J, :Z, keepH_U=true)
         G = getM!(gj, :Z, :C)
         # Compare results with original Python package

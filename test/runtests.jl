@@ -1,20 +1,28 @@
 using Test
 using SequenceJacobians
 
+using AdvancedMH
 using Base: has_offset_axes
 using CSV
 using CodecZlib: GzipDecompressorStream
-using DataFrames
+using DataFrames: DataFrame, nrow
 using Distributions
+using DynamicHMC
 using GSL
 using JSON3
 using LinearAlgebra
 using LinearMaps
 using LinearMaps: UniformScalingMap, WrappedMap, _unsafe_mul!
+using LogDensityProblems: logdensity, logdensity_and_gradient
 using LoopVectorization
+using MCMCChains
+using NLopt
 using NLsolve
+using Random
 using Roots: Brent, Secant
 using SequenceJacobians: jacbyinput
+using StructArrays
+using TransformVariables: as, asℝ₊, as𝕀
 
 import SequenceJacobians: backwardsolver, forwardsolver
 

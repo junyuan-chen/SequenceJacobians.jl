@@ -43,5 +43,5 @@ function solve!(ST::Type{T}, ss::SteadyState{TF}; x0=nothing, kwargs...) where
         x0 === nothing && (x0 = ss.inits[1])
     end
     solve!(ST, f, x0; kwargs...)::Tuple{TF,Bool}
-    return getvarvals(ss)
+    return ss[]
 end

@@ -127,5 +127,5 @@ function solve!(ca::GSL_MultirootFSolverCache, ss::SteadyState; keepinits::Bool=
     f!(y,x) = residuals!(y, ss, x)
     r = solve!(ca, f!, ss.inits; kwargs...)
     keepinits || copyto!(ss.inits, r[1])
-    return getvarvals(ss)
+    return ss[]
 end

@@ -117,11 +117,11 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         ss = SteadyState(mss, calis, inits, tars)
         @time solve!(GSL_Hybrids, ss, xtol=1e-10)
         # Compare results with original Python package
-        @test getval(ss, :A) ≈ 12.96 atol=1e-5
-        @test getval(ss, :B) ≈ 1.04 atol=1e-6
-        @test getval(ss, :C) ≈ 0.5820937276337765 atol=1e-7
-        @test getval(ss, :UCE) ≈ 4.434878914013179 atol=1e-6
-        @test getval(ss, :CHI) ≈ 0.012706305302404835 atol=1e-8
+        @test ss[:A] ≈ 12.96 atol=1e-5
+        @test ss[:B] ≈ 1.04 atol=1e-6
+        @test ss[:C] ≈ 0.5820937276337765 atol=1e-7
+        @test ss[:UCE] ≈ 4.434878914013179 atol=1e-6
+        @test ss[:CHI] ≈ 0.012706305302404835 atol=1e-8
 
         m = ta.twoassetmodel()
         # Directly move the household block

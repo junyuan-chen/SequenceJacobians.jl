@@ -6,6 +6,8 @@ needed for computing variance-covariance matrices across all relative time.
 """
 abstract type AbstractAllCovCache end
 
+show(io::IO, ca::AbstractAllCovCache) = print(io, typeof(ca).name.name)
+
 """
     FFTWAllCovCache{TF<:AbstractFloat, P<:Plan, PI<:Plan} <: AbstractAllCovCache
 

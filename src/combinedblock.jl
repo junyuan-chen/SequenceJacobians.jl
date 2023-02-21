@@ -51,7 +51,7 @@ struct CombinedBlock{NJ, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{in
             v = get(m.invpool, vo, 0)
             v === 0 && throw(ArgumentError("$vo is not a variable of the model"))
             # outlength rely on varvals
-            haskey(getvarvals(ss), vo) || error("$vo is not in varvals")
+            haskey(ss[], vo) || error("$vo is not in varvals")
         end
         for v in jactars
             hastarget(ss, v) || throw(ArgumentError("$v is not a target for steady state"))
@@ -98,14 +98,14 @@ solvertype(::CombinedBlock{NJ,ST}) where {NJ,ST} = ST
 
 # Use varvals attached to b.ss instead
 outlength(b::CombinedBlock, varvals::NamedTuple) =
-    sum(vo->length(getvarvals(b.ss)[vo]), outputs(b))
+    sum(vo->length(b.ss[vo]), outputs(b))
 outlength(b::CombinedBlock, varvals::NamedTuple, r::Int) =
-    length(getvarvals(b.ss)[outputs(b)[r]])
+    length(b.ss[outputs(b)[r]])
 
 model(b::CombinedBlock) = model(b.ss)
 
 function steadystate!(b::CombinedBlock, varvals::NamedTuple)
-    b.ss.varvals[] = merge(getvarvals(b.ss), NamedTuple{inputs(b)}(varvals))
+    b.ss.varvals[] = merge(b.ss[], NamedTuple{inputs(b)}(varvals))
     ca = b.sscache
     bvarvals = solve!(ca===nothing ? solvertype(b) : ca, b.ss; b.ssargs...)
     return merge(varvals, NamedTuple{outputs(b)}(bvarvals))
@@ -122,7 +122,7 @@ function jacobian(b::CombinedBlock, nT::Int, varvals::NamedTuple)
     nTfull = nT
     b.static && (nT = 1)
     # varvals from the argument may not contain internal variabls of b
-    J = TotalJacobian(model(b.ss), sources, b.jactars, getvarvals(b.ss), nT;
+    J = TotalJacobian(model(b.ss), sources, b.jactars, b.ss[], nT;
         excluded=excluded)
     keepH_U = get(b.jacargs, :keepH_U, false)::Bool
     keepfactor = get(b.jacargs, :keepfactor, false)::Bool
@@ -137,7 +137,7 @@ end
 
 function jacobian(b::CombinedBlock{0}, nT::Int, varvals::NamedTuple)
     excluded = get(b.jacargs, :excluded, nothing)
-    return TotalJacobian(model(b.ss), inputs(b), b.jactars, getvarvals(b.ss), nT;
+    return TotalJacobian(model(b.ss), inputs(b), b.jactars, b.ss[], nT;
         excluded=excluded)
 end
 

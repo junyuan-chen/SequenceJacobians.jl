@@ -158,3 +158,18 @@ end
 
 # An alternative to reshape that does not allocate
 _reshape(A::AbstractArray, dims::Int...) = ReshapedArray(A, dims, ())
+
+function acceptance_rate(sample::AbstractVector)
+    i1 = firstindex(sample)
+    iN = lastindex(sample)
+    count = 1
+    vlast = sample[i1]
+    @inbounds for i in i1+1:iN
+        v = sample[i]
+        if v != vlast
+            count += 1
+            vlast = v
+        end
+    end
+    return count/(iN-i1+1)
+end

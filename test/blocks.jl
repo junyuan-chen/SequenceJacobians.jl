@@ -147,10 +147,10 @@ end
     @test outlength(b, varvals0) == 1
     @test outlength(b, varvals0, 1) == 1
     @test model(b) === mpricing
-    varvals = getvarvals(sspricing)
+    varvals = sspricing[]
     steadystate!(b, varvals)
-    @test getval(b.ss, :pip) ≈ 0 atol=1e-8
-    @test getval(b.ss, :nkpc) ≈ 0 atol=1e-8
+    @test b.ss[:pip] ≈ 0 atol=1e-8
+    @test b.ss[:nkpc] ≈ 0 atol=1e-8
 
     # Compare results with original Python package
     J = jacobian(b, 3, varvals)
@@ -172,8 +172,8 @@ end
     ins = (:div, :r)
     b = block(barbitrage, ins, outs, [:div=>0.14, :r=>0.0125], :p=>10, :equity=>0,
         solver=Brent(), ssargs=(:x0=>(5,15),))
-    varvals = steadystate!(b, getvarvals(b.ss))
-    @test getval(b.ss, :p) ≈ 11.2 atol=1e-8
+    varvals = steadystate!(b, b.ss[])
+    @test b.ss[:p] ≈ 11.2 atol=1e-8
 
     # Compare results with original Python package
     J = jacobian(b, 3, varvals)
@@ -193,7 +193,7 @@ end
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],
         calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4],
         [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
-    varvals = steadystate!(b, getvarvals(b.ss))
+    varvals = steadystate!(b, b.ss[])
     @test varvals[:Q] ≈ 1 atol=1e-8
     @test varvals[:K] ≈ 10 atol=1e-8
 
@@ -218,7 +218,7 @@ end
 @testset "SolvedBlock" begin
     using SequenceJacobians: TwoAsset as ta
     b = ta.pricing_blk()
-    varvals = steadystate!(b, getvarvals(b.ss))
+    varvals = steadystate!(b, b.ss[])
     J = jacobian(b, 3, varvals)
     bj = block(b, J)
     @test inputs(bj) == inputs(b)
