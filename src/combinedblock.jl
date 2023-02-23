@@ -161,10 +161,16 @@ function getjacmap(b::CombinedBlock, J::GEJacobian, i::Int, ii::Int, r::Int, rr:
     end
 end
 
-show(io::IO, ::CombinedBlock{NJ,ST}) where {NJ,ST} = print(io, "CombinedBlock($ST)")
+show(io::IO, b::CombinedBlock{NJ,ST}) where {NJ,ST} =
+    (print(io, "CombinedBlock($ST, "); join(io, b.ss.blks, ", "); print(io, ')'))
 
 function show(io::IO, ::MIME"text/plain", b::CombinedBlock{NJ,ST,SS}) where {NJ,ST,SS}
     print(io, "CombinedBlock($ST) with $(b.ss) and $NJ GE restriction")
     println(io, NJ>1 ? "s:" : ":")
     _showinouts(io, b)
+    nblk = length(b.ss.blks)
+    if nblk > 0
+        print(io, "\n  block", nblk>1 ? "s:  " : ":  ")
+        join(io, b.ss.blks, ", ")
+    end
 end

@@ -119,8 +119,9 @@ function _fillG!(G::Matrix, gj::GEJacobian, observables, nT::Int)
 end
 
 function bayesian(gj::GEJacobian{TF}, shocks, observables,
-        priors::ValidVarInput, data; nTtrim::Integer=20,
+        priors::ValidVarInput, data;
         measurement_error::Union{Diagonal,UniformScaling,Nothing}=nothing,
+        nTtrim::Integer=20, demean::Bool=true,
         fdtype=Val(:forward), fdkwargs=NamedTuple(),
         allcovcachekwargs=NamedTuple()) where TF
     shocks isa ShockProcess && (shocks = (shocks,))
@@ -185,7 +186,7 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
     observables isa Union{Symbol, Pair} && (observables = (observables,))
     obs, lookupobs = _check_observables(gj, observables)
     Y, Nobs, Tobs = _check_data(data, obs, varvals)
-    _demean!(Y, Nobs, Tobs)
+    demean && _demean!(Y, Nobs, Tobs)
     nY = length(Y)
     Ycache = similar(Y)
     nT = gj.tjac.nT - nTtrim
@@ -262,17 +263,34 @@ function _update_paravals!(bm::BayesianModel{NT}, θ::NT) where NT
     return θ
 end
 
+function _fill_shocks!(bm::BayesianModel{NT,PR,SH}) where {NT,PR,SH}
+    if @generated
+        ex = :(impulse!(view(bm.Z,:,1), bm.shocks[1], bm[]))
+        N = length(SH.parameters)
+        if N > 1
+            for i in 2:N
+                ex = :($ex; impulse!(view(bm.Z,:,$i), bm.shocks[$i], bm[]))
+            end
+        end
+        ex = :($ex; nothing)
+        return ex
+    else
+        for k in 1:nshock(bm)
+            impulse!(view(bm.Z,:,k), bm.shocks[k], bm[])
+        end
+        return nothing
+    end
+end
+
 function loglikelihood!(bm::BayesianModel, θ)
     nT = bm.nT
     GZ = bm.GZ
     nsh = nshock(bm)
     paravals = _update_paravals!(bm, θ)
-    for k in 1:nshock(bm)
-        impulse!(view(bm.Z,:,k), bm.shocks[k], paravals)
-    end
+    _fill_shocks!(bm)
     #! TO DO: Allow updating G
-    for k in 1:nsh
-        mul!(view(GZ,:,k:k), view(bm.G,:,1+(k-1)*nT:k*nT), view(bm.Z,:,k:k))
+    @inbounds for k in 1:nsh
+        mul!(view(GZ,:,k), view(bm.G,:,1+(k-1)*nT:k*nT), view(bm.Z,:,k))
     end
     for i in 1:nsh
         @inbounds bm.SE[i] = paravals[i]

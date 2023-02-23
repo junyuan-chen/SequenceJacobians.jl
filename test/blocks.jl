@@ -208,11 +208,13 @@ end
            0 0.00370042   0.00736934 ]
     @test J.Gs[:r][:Q].lmap ≈ Jrq atol=1e-8
 
-    @test sprint(show, b) == "CombinedBlock(GSL_Hybrids)"
+    @test sprint(show, b) ==
+        "CombinedBlock(GSL_Hybrids, SimpleBlock(labor), SimpleBlock(investment))"
     @test sprint(show, MIME("text/plain"), b) == """
         CombinedBlock(GSL_Hybrids) with 2×2 SteadyState{Float64} and 2 GE restrictions:
           inputs:  Y, w, Z, r
-          outputs: Q, K, N, mc"""
+          outputs: Q, K, N, mc
+          blocks:  SimpleBlock(labor), SimpleBlock(investment)"""
 end
 
 @testset "SolvedBlock" begin
@@ -233,9 +235,10 @@ end
     @test jacobian(bj, 3, varvals) === J
     @test_throws ErrorException jacobian(bj, 5, varvals)
 
-    @test sprint(show, bj) == "SolvedBlock(CombinedBlock(Roots_Default))"
+    @test sprint(show, bj) ==
+        "SolvedBlock(CombinedBlock(Roots_Default, SimpleBlock(pricing)))"
     @test sprint(show, MIME("text/plain"), bj) == """
-        SolvedBlock(CombinedBlock(Roots_Default)):
+        SolvedBlock(CombinedBlock(Roots_Default, SimpleBlock(pricing))):
           inputs:  mc, r, Y, κp, mup
           outputs: pip"""
 end

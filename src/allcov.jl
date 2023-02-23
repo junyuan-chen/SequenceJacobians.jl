@@ -70,10 +70,11 @@ function allcov!(ca::FFTWAllCovCache, x::AbstractArray{<:Real,3},
         "size of x ($(size(x))) is expected to be $(size(ca.dft)) to match ca"))
     copyto!(view(ca.xpadded,1:T,:,:), x)
     mul!(ca.dft, ca.plan, ca.xpadded)
+    # threads=false avoids allocation and could even make it slightly faster
     if σ isa Real
-        @tullio ca.r[t,o1,o2] = conj(ca.dft[t,o1,z]) * σ^2 * ca.dft[t,o2,z]
+        @tullio ca.r[t,o1,o2] = conj(ca.dft[t,o1,z]) * σ^2 * ca.dft[t,o2,z] threads=false
     else
-        @tullio ca.r[t,o1,o2] = conj(ca.dft[t,o1,z]) * σ[z]^2 * ca.dft[t,o2,z]
+        @tullio ca.r[t,o1,o2] = conj(ca.dft[t,o1,z]) * σ[z]^2 * ca.dft[t,o2,z] threads=false
     end
     mul!(ca.ir, ca.iplan, ca.r)
     return view(ca.ir,1:T,:,:)
@@ -101,9 +102,9 @@ function allcov(x::AbstractArray{<:Real,3}, σ::Union{Real, AbstractVector{<:Rea
     copyto!(view(xpadded,1:T,:,:), x)
     dft = rfft(xpadded, 1)
     if σ isa Real
-        @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ^2 * dft[t,o2,z]
+        @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ^2 * dft[t,o2,z] threads=false
     else
-        @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ[z]^2 * dft[t,o2,z]
+        @tullio r[t,o1,o2] = conj(dft[t,o1,z]) * σ[z]^2 * dft[t,o2,z] threads=false
     end
     return view(irfft(r, Tfull, 1),1:T,:,:)
 end
@@ -279,11 +280,13 @@ Memory allocations can be avoided by providing an additional vector `Ycache`.
 function loglikelihood!(V::AbstractMatrix, Y::AbstractVector,
         Ycache::AbstractVector=similar(Y))
     N = length(Y)
-    chol = cholesky!(V)
+    # Hermitian avoids some cases where cholesky! fails
+    chol = cholesky!(Hermitian(V))
     # A multiple of 2 for the log determinant is cancelled out by the root
     D = sum(log, view(_reshape(V, N^2), diagind(V)))
-    # _reshape Y avoids allocations
-    Q = BLAS.dot(N, Y, 1, ldiv!(Ycache, chol, _reshape(Y,N,1)), 1)
+    # _reshape avoids allocations
+    ldiv!(_reshape(Ycache,N,1), chol, _reshape(Y,N,1))
+    Q = BLAS.dot(N, Y, 1, Ycache, 1)
     return -D - Q/2
 end
 

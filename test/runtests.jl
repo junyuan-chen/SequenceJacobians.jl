@@ -51,7 +51,8 @@ const tests = [
     "twoasset",
     "Horvath",
     "estimation",
-    "bayesian"
+    "bayesian",
+    "SmetsWouters"
 ]
 
 printstyled("Running tests:\n", color=:blue, bold=true)

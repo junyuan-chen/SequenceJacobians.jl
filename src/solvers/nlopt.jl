@@ -3,7 +3,7 @@ function logposterior_nlopt_obj!(bm::BayesOrTrans, θ, grad, counter, printgap)
     l = logposterior_obj!(bm, θ, grad)
     counter[] += 1
     iter = counter[]
-    if printgap > 0 && iter % printgap == 1
+    if printgap > 0 && (iter-1) % printgap == 0
         @printf "iter %4i:  l = %10f" iter l
         println("  θ = ", θ)
     end
@@ -11,9 +11,9 @@ function logposterior_nlopt_obj!(bm::BayesOrTrans, θ, grad, counter, printgap)
 end
 
 function _printgap(verbose::Union{Bool,Integer})
-    if verbose == true
-        return 10
-    elseif verbose == false
+    if verbose === true
+        return 20
+    elseif verbose === false
         return 0
     else
         return Int(verbose)

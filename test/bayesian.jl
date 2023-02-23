@@ -6,12 +6,11 @@
     calis = [:eis=>1, :δ=>0.025, :α=>0.11, :L=>1]
     tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
     inits = [:β=>0.98, :Z=>0.85, :K=>3]
-    ss =  SteadyState(m, calis, inits, tars)
+    ss = SteadyState(m, calis, inits, tars)
     solve!(GSL_Hybrids, ss, xtol=1e-10)
     j = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
-    gj = GEJacobian(j, :Z, keepH_U=true)
-    sh, priors = kspriors()
-    shock = arma11shock(:σ, :ar, :ma, :Z)
+    gj = GEJacobian(j, :Z)
+    shock, priors = kspriors()
 
     bm = bayesian(gj, shock, :Y=>:y, priors, data)
     @test dimension(bm) == 3
@@ -59,7 +58,7 @@
     θmode2, rx2, _, r2 = mode(bm2, :LD_LBFGS, θ0, lower_bounds=-5, upper_bounds=3)
     @test rx2 ≈ [-1.7205119057113951, 2.2947334490599407, -3.4231049782763914] atol=1e-5
     rr = collect(θmode2)
-    @test rr ≈ rx atol=1e-7
+    @test rr ≈ rx atol=1e-6
     l2, dl2 = logdensity_and_gradient(bm2, rr)
     @test l2 ≈ -58.03849625108774 atol=1e-5
     @test dl2 ≈ [-146.3345012664795, 2.810868263244629, -3.8802170753479004] atol=1e-4

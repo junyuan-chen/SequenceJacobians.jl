@@ -8,7 +8,7 @@ using FiniteDiff: finite_difference_gradient!, finite_difference_jacobian!,
     GradientCache, default_relstep, HessianCache, finite_difference_hessian!
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, Factorization, LU, lu!,
-    cholesky!, ldiv!, norm, dot, stride1, diag
+    Hermitian, cholesky!, ldiv!, norm, dot, stride1, diag
 using LinearMaps: WrappedMap
 using LogDensityProblems: LogDensityOrder
 using MacroTools
@@ -224,6 +224,7 @@ include("examples/rbc.jl")
 include("examples/KrusellSmith.jl")
 include("examples/twoasset.jl")
 include("examples/Horvath.jl")
+include("examples/SmetsWouters.jl")
 
 function __init__()
     @require GSL = "92c85e6c-cbff-5e0c-80f7-495c94daaecd" begin
