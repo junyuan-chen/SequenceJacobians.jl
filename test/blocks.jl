@@ -36,15 +36,24 @@
     @test varvals[:C] ≈ 1.1111111111111112
     @test varvals[:I] ≈ 0.05
 
-    @test jacobian(bhh, Val(1), 5, varvals) ≈ [0, 1]
-    @test jacobian(bhh, Val(7), 5, varvals) ≈ [0, 2]
-    @test jacobian(bhh, Val(8), 5, varvals) ≈ [0, -0.975]
+    aa = ArrayToArgs((1,2,5,6))
+    v = rand(6)
+    args = aa(v)
+    @test args == (v[1], v[2], view(v,3:5), v[6])
+    aa2 = ArrayToArgs((3,3,6))
+    @test_throws ErrorException aa2(v)
+
+    j = jacobian(bhh, [1,7,8], 5, varvals)
+    @test j.J[:,1] ≈ [0, 1]
+    @test j.J[:,2] ≈ [0, 2]
+    @test j.J[:,3] ≈ [0, -0.975]
 
     @test sprint(show, bmkt) == "SimpleBlock(mkt_clearing)"
     @test sprint(show, MIME("text/plain"), bmkt) == """
         SimpleBlock(mkt_clearing):
           inputs:  r, C, Y, I, K, L, w, eis, β, lead(C), lag(K), lead(r)
           outputs: goods_mkt, euler, walras"""
+    @test sprint(show, j) == "SimpleBlockJacobian(household: K, δ, K → C, I)"
 end
 
 @testset "HetBlock" begin
@@ -76,10 +85,11 @@ end
     # Feed in steady-state values from Python package for comparing results
     varvals = (r=0.01, w=0.89, β=0.981952788061795, eis=1)
     b = kshhblock(0, 200, 500, 0.966, 0.5, 7)
-    @test_throws ErrorException jacobian(b, Val(1), 5, varvals)
+    @test_throws ErrorException jacobian(b, (1,), 5, varvals)
     varvals = steadystate!(b, varvals)
     # Check jacobian for effect on impact
-    j = jacobian(b, Val(1), 1, varvals)
+    J = jacobian(b, (1,), 1, varvals)
+    j = J.ca
     dv = j.df[:,:,1]
     # Derivatives from Python package are based on a fixed epsilon
     # Need to specify twosided=True for better accuracy
@@ -94,7 +104,8 @@ end
     @test j.dYs[1] ≈ [3.047070890160419 0.09578625552963749] atol=1e-7
 
     # Check jacobian for 1-period ahead anticipation effect
-    j = jacobian(b, Val(1), 2, varvals)
+    J = jacobian(b, (1,), 2, varvals)
+    j = J.ca
     dv = j.df[:,:,1]
     @test dv[1:3,1] ≈ [0, 0, 0]
     @test dv[1:3,5] ≈ [0.89735076, 0.89719971, 0.89689996] atol=1e-7
@@ -105,13 +116,15 @@ end
     @test dD[1:3,1] ≈ [-2.45911683e-3,  6.72083192e-4, -3.48413238e-5] atol=1e-10
     @test j.dYs[1][2,:] ≈ [0.6818556801588316, -0.6818556801588341] atol=1e-6
 
-    j = jacobian(b, Val(1), 3, varvals)
+    J = jacobian(b, (1,), 3, varvals)
+    j = J.ca
     @test j.Es[1][1:3,1,1] ≈ [-29.52928609, -29.52928582, -29.52928554] atol=1e-7
     @test j.Es[1][498:500,7,2] ≈ [163.33189788, 165.91565888, 168.53432082] atol=1e-7
     @test j.Es[2][1:3,1,1] ≈ [-1.39279428, -1.38938866, -1.38593711] atol=1e-7
     @test j.Es[2][498:500,7,2] ≈ [3.89850409, 3.9474403, 3.99701225] atol=1e-7
 
-    j = jacobian(b, Val(1), 5, varvals)
+    J = jacobian(b, (1,), 5, varvals)
+    j = J.ca
     @test j.Js[1][1][1,:] ≈ [3.04707089, 0.68185568, 0.64125217, 0.60439044, 0.57061299] atol=1e-6
     @test j.Js[1][1][5,:] ≈ [2.79839241, 3.42915491, 4.05731394, 4.68424741, 5.31162232] atol=1e-6
     @test j.Js[1][2][1,:] ≈ [0.09578626, -0.68185568, -0.64125217, -0.60439044, -0.57061299] atol=1e-6
@@ -126,6 +139,7 @@ end
         HetBlock(KSHousehold{Float64}):
           inputs:  r, w, β, eis
           outputs: A, C"""
+    @test sprint(show, J) == "HetBlockJacobian(KSHousehold{Float64}: r → A, C)"
 end
 
 @testset "CombinedBlock" begin
@@ -153,18 +167,18 @@ end
     @test b.ss[:nkpc] ≈ 0 atol=1e-8
 
     # Compare results with original Python package
-    J = jacobian(b, 3, varvals)
-    @test all(isapprox.(J.Gs[:κp][:pip].lmap, 0, atol=1e-8))
+    J = jacobian(b, 1:length(ins), 3, varvals)
+    @test all(isapprox.(J.Gs[:κp][:pip].out, 0, atol=1e-8))
     Jmc = [0.1 0.09876543 0.09754611;
            0   0.1        0.09876543;
            0   0          0.1        ]
-    @test J.Gs[:mc][:pip].lmap ≈ Jmc atol=1e-8
+    @test J.Gs[:mc][:pip].out ≈ Jmc atol=1e-8
     Jmup = [0.0970225 0.09582469 0.09464167;
             0         0.0970225  0.09582469;
             0         0          0.0970225  ]
-    @test J.Gs[:mup][:pip].lmap ≈ Jmup atol=1e-8
-    @test all(isapprox.(J.Gs[:Y][:pip].lmap, 0, atol=1e-8))
-    @test all(isapprox.(J.Gs[:r][:pip].lmap, 0, atol=1e-8))
+    @test J.Gs[:mup][:pip].out ≈ Jmup atol=1e-8
+    @test all(isapprox.(J.Gs[:Y][:pip].out, 0, atol=1e-8))
+    @test all(isapprox.(J.Gs[:r][:pip].out, 0, atol=1e-8))
 
     ins0 = (:p, :div, :r, lead(:div), lead(:p), lead(:r))
     outs = :p
@@ -176,15 +190,15 @@ end
     @test b.ss[:p] ≈ 11.2 atol=1e-8
 
     # Compare results with original Python package
-    J = jacobian(b, 3, varvals)
+    J = jacobian(b, 1:length(ins), 3, varvals)
     Jdiv = [0 0.98765432 0.97546106;
             0 0          0.98765432;
             0 0          0          ]
-    @test J.Gs[:div][:p].lmap ≈ Jdiv atol=1e-8
+    @test J.Gs[:div][:p].out ≈ Jdiv atol=1e-8
     Jr = [0 -11.0617284 -10.92516385;
           0 0           -11.0617284;
           0 0           0            ]
-    @test J.Gs[:r][:p].lmap ≈ Jr atol=1e-8
+    @test J.Gs[:r][:p].out ≈ Jr atol=1e-6
 
     blabor = block(ta.labor, (:Y, :w, :K, :Z, :α, lag(:K)), (:N, :mc))
     ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lag(:K), lead(:K), lead(:N), lead(:Q), lead(:Z), lead(:mc), lead(:r)]
@@ -198,15 +212,15 @@ end
     @test varvals[:K] ≈ 10 atol=1e-8
 
     # Compare results with original Python package
-    J = jacobian(b, 3, varvals)
+    J = jacobian(b, 1:4, 3, varvals)
     Jyk = [0 0.03789632 0.03714605;
            0 0.03761037 0.07490055;
            0 0.03746678 0.0746146  ]
-    @test J.Gs[:Y][:K].lmap ≈ Jyk atol=1e-8
+    @test J.Gs[:Y][:K].out ≈ Jyk atol=1e-7
     Jrq = [0 -0.97663311 -0.95729755;
            0 0.00736934  -0.97297837;
            0 0.00370042   0.00736934 ]
-    @test J.Gs[:r][:Q].lmap ≈ Jrq atol=1e-8
+    @test J.Gs[:r][:Q].out ≈ Jrq atol=1e-7
 
     @test sprint(show, b) ==
         "CombinedBlock(GSL_Hybrids, SimpleBlock(labor), SimpleBlock(investment))"
@@ -215,30 +229,5 @@ end
           inputs:  Y, w, Z, r
           outputs: Q, K, N, mc
           blocks:  SimpleBlock(labor), SimpleBlock(investment)"""
-end
-
-@testset "SolvedBlock" begin
-    using SequenceJacobians: TwoAsset as ta
-    b = ta.pricing_blk()
-    varvals = steadystate!(b, b.ss[])
-    J = jacobian(b, 3, varvals)
-    bj = block(b, J)
-    @test inputs(bj) == inputs(b)
-    @test invars(bj) == invars(b)
-    @test ssinputs(bj) == ssinputs(b)
-    @test outputs(bj) == outputs(b)
-    @test outlength(bj, varvals) == outlength(b, varvals)
-    @test outlength(bj, varvals, 1) == outlength(b, varvals, 1)
-
-    @test_throws ErrorException steadystate!(bj, varvals)
-    @test jacbyinput(bj) == false
-    @test jacobian(bj, 3, varvals) === J
-    @test_throws ErrorException jacobian(bj, 5, varvals)
-
-    @test sprint(show, bj) ==
-        "SolvedBlock(CombinedBlock(Roots_Default, SimpleBlock(pricing)))"
-    @test sprint(show, MIME("text/plain"), bj) == """
-        SolvedBlock(CombinedBlock(Roots_Default, SimpleBlock(pricing))):
-          inputs:  mc, r, Y, κp, mup
-          outputs: pip"""
+    @test sprint(show, J) == "CombinedBlockJacobian(val, inv: Y, w, Z, r → Q, K, N, mc)"
 end

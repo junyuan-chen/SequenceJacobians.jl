@@ -9,10 +9,10 @@
     ss = SteadyState(m, calis, inits, tars)
     solve!(GSL_Hybrids, ss, xtol=1e-10)
     j = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
-    gj = GEJacobian(j, :Z)
+    gs = GMaps(GEJacobian(j, :Z))
     shock, priors = kspriors()
 
-    bm = bayesian(gj, shock, :Y=>:y, priors, data)
+    bm = bayesian(gs, shock, :Y=>:y, priors, data)
     @test dimension(bm) == 3
     θ = [0.2, 0.9, 0.003]
     lpri = logprior(bm, θ)
@@ -30,7 +30,7 @@
     @test l1 ≈ l
     @test dl1 ≈ dl
     @test dl1 !== dl
-    bm1 = bayesian(gj, shock, :Y=>:y, priors, data, fdtype=Val(:central))
+    bm1 = bayesian(gs, shock, :Y=>:y, priors, data, fdtype=Val(:central))
     l1, dl1 = logposterior_and_gradient!(bm1, θ)
     @test dl1 ≈ dl atol=1e-2
 
@@ -71,10 +71,10 @@
 
     spl = MetropolisHastings(RandomWalkProposal{true}(MvNormal(zeros(3), 2.5.*Hermitian(Σ))))
     # Small sample size to save time
-    Ndrop = 5000
-    N = 10000
+    Ndrop = 3000
+    N = 5000
     @time chain = sample(bm, spl, N, init_params=rx,
-        param_names=collect(keys(bm[])), chain_type=Chains)
+        param_names=collect(keys(bm[])), chain_type=Chains, progress=false)
     @test acceptance_rate(view(chain.value, Ndrop+1:N, 1, 1)) < 0.3
 
     tr = as((σ=as(Real,0.01,4), ar=as(Real,0.02,0.98), ma=as(Real,0.02,0.98)))
@@ -84,7 +84,7 @@
     Σ3 = vcov(bm3, rx3)
     spl3 = MetropolisHastings(RandomWalkProposal{true}(MvNormal(zeros(3), 2.5.*Hermitian(Σ3))))
     @time chain3 = sample(bm3, spl3, N, init_params=rx3,
-        param_names=collect(keys(bm[])), chain_type=Chains)
+        param_names=collect(keys(bm[])), chain_type=Chains, progress=false)
     @test acceptance_rate(view(chain3.value, Ndrop+1:N, 1, 1)) < 0.2
     postmh = StructArray(transform(tr, view(chain3.value,t,1:3,1)) for t in 1:N)
 

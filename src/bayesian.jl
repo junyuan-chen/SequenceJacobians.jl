@@ -30,7 +30,7 @@ struct BayesianModel{NT<:NamedTuple, PR<:Tuple, SH<:Tuple, TF<:AbstractFloat,
 end
 
 function _check_observables(gj::GEJacobian, observables)
-    vars = gj.tjac.vars
+    vars = gj.tjac.pool
     exos = gj.exovars
     obs = Vector{Pair}(undef, length(observables))
     lookup = Dict{Symbol,Int}()
@@ -103,12 +103,13 @@ function _demean!(Y, N::Int, T::Int)
     end
 end
 
-function _fillG!(G::Matrix, gj::GEJacobian, observables, nT::Int)
+function _fillG!(G::Matrix, gs::GMaps, observables, nT::Int)
+    gj = gs.gj
     nTfull = gj.nTfull
     for (j, z) in enumerate(gj.exovars)
         i0 = 0
         for (o, _) in observables
-            M = getM!(gj, z, o)
+            M = gs[z, o]
             N = size(M,1) ÷ nTfull
             for _ in 1:N
                 copyto!(G, i0+1:i0+nT, 1+(j-1)*nT:j*nT, M, 1:nT, 1:nT)
@@ -118,12 +119,13 @@ function _fillG!(G::Matrix, gj::GEJacobian, observables, nT::Int)
     end
 end
 
-function bayesian(gj::GEJacobian{TF}, shocks, observables,
+function bayesian(gs::GMaps{TF}, shocks, observables,
         priors::ValidVarInput, data;
         measurement_error::Union{Diagonal,UniformScaling,Nothing}=nothing,
         nTtrim::Integer=20, demean::Bool=true,
         fdtype=Val(:forward), fdkwargs=NamedTuple(),
         allcovcachekwargs=NamedTuple()) where TF
+    gj = gs.gj
     shocks isa ShockProcess && (shocks = (shocks,))
     nsh = length(shocks)
     shockses = ntuple(i->shockse(shocks[i]), nsh)
@@ -156,7 +158,7 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
     shockparas = (shockparas...,)
     nshpara = length(lookuppara)
     for k in keys(lookuppara)
-        k in gj.tjac.vars && throw(ArgumentError(
+        haskey(gj.tjac.invpool, k) && throw(ArgumentError(
             "name of shock parameter $k coincides with a structural parameter"))
     end
     i1 = 0
@@ -167,8 +169,6 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
     for (v, p) in priors
         tp = get(lookuppara, v, nothing)
         if tp === nothing
-            v in gj.tjac.vars || throw(ArgumentError(
-                "$v is not a parameter reachable by the GEJacobian"))
             i1 += 1
             i2 = nshpara + i1
             vpriors[i2] = p
@@ -192,7 +192,7 @@ function bayesian(gj::GEJacobian{TF}, shocks, observables,
     nT = gj.tjac.nT - nTtrim
     Z = Matrix{TF}(undef, nT, nsh)
     G = Matrix{TF}(undef, nT*Nobs, length(Z))
-    _fillG!(G, gj, obs, nT)
+    _fillG!(G, gs, obs, nT)
     GZ = Matrix{TF}(undef, size(G, 1), nsh)
     SE = Vector{TF}(undef, nsh)
     allcovcache = FFTWAllCovCache(nT, Nobs, nsh, TF; allcovcachekwargs...)

@@ -8,17 +8,18 @@
     solve!(GSL_Hybrids, ss, xtol=1e-10)
     J = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
     gj = GEJacobian(J, :Z)
+    gs = GMaps(gj)
 
     @testset "allcov allcor correlogram" begin
         dZ1 = 0.9.^(0:299)
-        dY1 = getG!(gj, :Z, :Y) * dZ1
-        dC1 = getG!(gj, :Z, :C) * dZ1
-        dK1 = getG!(gj, :Z, :K) * dZ1
+        dY1 = gs[:Z,:Y] * dZ1
+        dC1 = gs[:Z,:C] * dZ1
+        dK1 = gs[:Z,:K] * dZ1
         dZ2 = zeros(300)
         dZ2[1] = 1
-        dY2 = getG!(gj, :Z, :Y) * dZ2
-        dC2 = getG!(gj, :Z, :C) * dZ2
-        dK2 = getG!(gj, :Z, :K) * dZ2
+        dY2 = gs[:Z,:Y] * dZ2
+        dC2 = gs[:Z,:C] * dZ2
+        dK2 = gs[:Z,:K] * dZ2
         dX = reshape(vcat(dZ1, dY1, dC1, dK1, dZ2, dY2, dC2, dK2), 300, 4, 2)
         σ = [0.1, 0.2]
         Σ = allcov(dX, σ)
@@ -74,11 +75,12 @@
 
     @testset "simulate" begin
         ε = randn(399)
-        s = simulate(gj, :Z, :K, ε, ARMAProcess(0.9, ()))
+        gs = GMaps(gj)
+        s = simulate(gs, :Z, :K, ε, ARMAProcess(0.9, ()))
         @test size(s) == (100, 1)
 
         ε = randn(100)
-        @test_throws ArgumentError simulate(gj, :Z, :K, ε, ARMAProcess(0.9, ()))
+        @test_throws ArgumentError simulate(gs, :Z, :K, ε, ARMAProcess(0.9, ()))
     end
 end
 

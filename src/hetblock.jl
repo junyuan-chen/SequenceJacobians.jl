@@ -190,8 +190,8 @@ function _setJ!(ca::HetAgentJacCache, i::Int, npol::Int)
     end
 end
 
-function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varvals,
-        evs, evsss) where i
+function _jacobian!(b::HetBlock, ca::HetAgentJacCache, i::Int, nT::Int, varvals,
+        evs, evsss)
 
     ins = inputs(b)
     ha = ca.ha
@@ -269,8 +269,6 @@ function _jacobian!(b::HetBlock, ca::HetAgentJacCache, ::Val{i}, nT::Int, varval
     _setJ!(ca, i, npol)
 end
 
-jacbyinput(::HetBlock) = true
-
 _fdtype(::GradientCache{T1,T2,T3,T4,fdtype}) where {T1,T2,T3,T4,fdtype} = fdtype
 
 function _getjaccache(b::HetBlock, nT::Int)
@@ -291,27 +289,41 @@ function _getjaccache(b::HetBlock, nT::Int)
     end
 end
 
+struct HetBlockJacobian{BLK<:HetBlock, TF, CA<:HetAgentJacCache} <: AbstractBlockJacobian{TF}
+    blk::BLK
+    ca::CA
+    iins::Vector{Int}
+    nT::Int
+end
+
+function (j::HetBlockJacobian)(varvals::NamedTuple)
+    evs = expectedvalues(j.ca.ha)
+    evsss = expectedvalues(j.ca.hass)
+    for i in j.iins
+        _jacobian!(j.blk, j.ca, i, j.nT, varvals, evs, evsss)
+    end
+    return j
+end
+
 # ! To do: consider shocks to exogenous law of motion and aggregation method
-function jacobian(b::HetBlock, ::Val{i}, nT::Int, varvals::NamedTuple) where i
+function jacobian(b::HetBlock{HA,TF}, iins, nT::Int, varvals::NamedTuple) where {HA,TF}
     ca = _getjaccache(b, nT)
     b.jacargs[:jacca] = ca
-    evs = expectedvalues(ca.ha)
-    evsss = expectedvalues(ca.hass)
-
-    _jacobian!(b, ca, Val(i), nT, varvals, evs, evsss)
-
-    return ca
+    j = HetBlockJacobian{typeof(b),TF,typeof(ca)}(b, ca, collect(iins), nT)
+    return j(varvals)
 end
 
-function getjacmap(b::HetBlock, J::HetAgentJacCache,
-        i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
-    j = J.Js[i][r]
-    return LinearMap(j), false
-end
+@inline getindex(j::HetBlockJacobian, r::Int, i::Int) = j.ca.Js[j.iins[i]][r]
 
 show(io::IO, b::HetBlock) = print(io, "HetBlock($(b.ha))")
 
 function show(io::IO, ::MIME"text/plain", b::HetBlock)
     println(io, "HetBlock($(b.ha)):")
     _showinouts(io, b)
+end
+
+function show(io::IO, j::HetBlockJacobian)
+    print(io, "HetBlockJacobian(", j.blk.ha, ": ")
+    _show_jac_from_to(io, j)
+    print(io, ')')
 end

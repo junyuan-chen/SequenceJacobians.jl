@@ -159,6 +159,8 @@ end
 # An alternative to reshape that does not allocate
 _reshape(A::AbstractArray, dims::Int...) = ReshapedArray(A, dims, ())
 
+_getvarlength(vars, vals::NamedTuple) = sum(v->length(vals[v]), vars)
+
 function acceptance_rate(sample::AbstractVector)
     i1 = firstindex(sample)
     iN = lastindex(sample)

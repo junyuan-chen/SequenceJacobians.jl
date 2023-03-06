@@ -111,55 +111,78 @@ function steadystate!(b::CombinedBlock, varvals::NamedTuple)
     return merge(varvals, NamedTuple{outputs(b)}(bvarvals))
 end
 
-jacbyinput(::CombinedBlock) = false
+struct CombinedBlockJacobian{BLK<:CombinedBlock, TF, G<:GMaps,
+        P<:GEJacobianUpdatePlan} <: AbstractBlockJacobian{TF}
+    blk::BLK
+    J::Matrix{Matrix{TF}}
+    Gs::G
+    iins::Vector{Int}
+    plan::P
+    ishiftmap::Vector{Pair{Int,ShiftMap}}
+end
 
-function jacobian(b::CombinedBlock, nT::Int, varvals::NamedTuple)
+function (j::CombinedBlockJacobian)(varvals::NamedTuple)
+    b = j.blk
+    j.blk.ss.varvals[] = invarvals = merge(b.ss[], NamedTuple{inputs(b)}(varvals))
+    j.plan(invarvals)
+    j.Gs()
+    for (i, smap) in j.ishiftmap
+        mul!(j.J[i], smap, true)
+    end
+end
+
+function jacobian(b::CombinedBlock, iins, nT::Int, varvals::NamedTuple, TF::Type=Float64)
     ins = inputs(b)
     outs = outputs(b)
-    sources = (ins..., b.jacus...)
+    iins = collect(iins)
+    exos = map(i->ins[i], iins)
+    sources = (exos..., b.jacus...)
     excluded = get(b.jacargs, :excluded, nothing)
     # Set nT = 1 and avoid WrappedMap for static problems
     nTfull = nT
     b.static && (nT = 1)
     # varvals from the argument may not contain internal variabls of b
-    J = TotalJacobian(model(b.ss), sources, b.jactars, b.ss[], nT;
+    b.ss.varvals[] = invarvals = merge(b.ss[], NamedTuple{ins}(varvals))
+    j = TotalJacobian(model(b.ss), sources, b.jactars, invarvals, nT;
         excluded=excluded)
-    keepH_U = get(b.jacargs, :keepH_U, false)::Bool
-    keepfactor = get(b.jacargs, :keepfactor, false)::Bool
-    gj = GEJacobian(J, ins; keepH_U=keepH_U, keepfactor=keepfactor, nTfull=nTfull)
-    for vi in ins
-        for vo in outs
-            getG!(gj, vi, vo)
+    gj = GEJacobian(j, exos; nTfull=nTfull)
+    Gs = GMaps(gj, outs)
+    p = plan(gj, exos)
+    No = length(outs)
+    Ni = length(iins)
+    ishiftmap = Pair{Int,ShiftMap}[]
+    J = Matrix{Matrix{TF}}(undef, No, Ni)
+    for n in 1:Ni
+        vi = exos[n]
+        for m in 1:No
+            vo = outs[m]
+            map = get(Gs[vi], vo, nothing)
+            if map === nothing
+                J[m,n] = Zeros{TF}(nT*length(invarvals[vo]), nT*length(invarvals[vi]))
+            elseif map isa ShiftMap
+                J[m,n] = map(nT)
+                push!(ishiftmap, LinearIndices(J)[m,n]=>map)
+            else
+                J[m,n] = map.out
+            end
         end
     end
-    return gj
+    return CombinedBlockJacobian(b, J, Gs, iins, p, ishiftmap)
 end
 
-function jacobian(b::CombinedBlock{0}, nT::Int, varvals::NamedTuple)
+# ! To do: Support in-place update via CombinedBlockJacobian?
+#=
+function jacobian(b::CombinedBlock{0}, iins::NTuple{N,Int}, nT::Int,
+        varvals::NamedTuple) where N
+    ins = map(i->inputs(b)[i], iins)
     excluded = get(b.jacargs, :excluded, nothing)
-    return TotalJacobian(model(b.ss), inputs(b), b.jactars, b.ss[], nT;
-        excluded=excluded)
+    b.ss.varvals[] = varvals = merge(b.ss[], NamedTuple{ins}(varvals))
+    j = TotalJacobian(model(b.ss), ins, b.jactars, varvals, nT; excluded=excluded)
+    return CombinedBlockJacobian(b, j, iins)
 end
+=#
 
-function getjacmap(b::CombinedBlock, J::GEJacobian, i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
-    vi = inputs(b)[i]
-    vo = outputs(b)[r]
-    if hasjactars(b)
-        jmap = J.Gs[vi][vo]
-        if jmap isa Matrix
-            return jmap[rr,ii], false
-        else
-            return jmap, false
-        end
-    else
-        jmap = J.totals[vi][vo]
-        if jmap isa Matrix
-            return jmap[rr,ii], false
-        else
-            return jmap, false
-        end
-    end
-end
+@inline getindex(j::CombinedBlockJacobian, r::Int, i::Int) = j.J[r,i]
 
 show(io::IO, b::CombinedBlock{NJ,ST}) where {NJ,ST} =
     (print(io, "CombinedBlock($ST, "); join(io, b.ss.blks, ", "); print(io, ')'))
@@ -173,4 +196,12 @@ function show(io::IO, ::MIME"text/plain", b::CombinedBlock{NJ,ST,SS}) where {NJ,
         print(io, "\n  block", nblk>1 ? "s:  " : ":  ")
         join(io, b.ss.blks, ", ")
     end
+end
+
+function show(io::IO, j::CombinedBlockJacobian)
+    print(io, "CombinedBlockJacobian(")
+    join(io, j.plan.gj.tjac.tars, ", ")
+    print(io, ": ")
+    _show_jac_from_to(io, j)
+    print(io, ')')
 end

@@ -1,111 +1,148 @@
-using LinearAlgebra: diagind, rmul!
-using LinearMaps: CompositeMap, UniformScalingMap, diagm
-using SparseArrays: spdiagm
+const SubMat{T} = SubArray{T, 2, Matrix{T}, Tuple{UnitRange{Int64}, UnitRange{Int64}}, false}
+const MatOrSub{T} = Union{Matrix{T}, SubMat{T}}
 
-import Base: ndims, has_offset_axes, copy, iszero, transpose, +, -, *, /, size
-import LinearAlgebra: isdiag, mul!
-import LinearMaps: LinearMap, MulStyle, FiveArg, _unsafe_mul!
-
-const Tuple2 = Tuple{Int,Int}
-const SInd = IdDict{Tuple2,Int}
-
-struct Shift{T<:Number}
-    d::SInd
-    v::Vector{T}
+struct Shift{T<:Number, S, M<:MatOrSub{T}}
+    d::Vector{Tuple{Int,Int}}
+    v::Vector{Vector{M}}
+    size::Tuple{Int,Int}
+    Shift(d::Vector{Tuple{Int,Int}}, v::Vector{Vector{M}}, size::Tuple{Int,Int}) where M =
+        new{eltype(eltype(eltype(v))), size==(1,1), M}(d, v, size)
 end
 
-# Sign convention for lead/lag follows the Python package
+struct CompositeShift{T<:Number, V<:Union{T,Matrix{T}}}
+    d::Vector{Tuple{Int,Int}}
+    v::Vector{V}
+    size::Tuple{Int,Int}
+    CompositeShift(d::Vector{Tuple{Int,Int}}, v::Vector{<:Union{T,Matrix{T}}},
+        size::Tuple{Int,Int}) where T = new{T,eltype(v)}(d, v, size)
+end
+
+const ShiftOrComp{T} = Union{Shift{T}, CompositeShift{T}}
+
+# Sign convention for lead/lag follows the Python package (lags take negative values)
 # The paper appendix uses the opposite sign
-Lag(v::Number=1.0) = Shift(SInd((-1,0)=>1), [v])
-Lead(v::Number=1.0) = Shift(SInd((1,0)=>1), [v])
 
-Shift(i::Int, v::Number=1.0) = Shift(SInd((i,0)=>1), [v])
-
-function Shift(kvs::Pair{Tuple2,T}...) where T
-    d = SInd()
-    v = T[]
-    for (k, s) in kvs
-        i = get(d, k, 0)
-        if i === 0
-            push!(v, s)
-            d[k] = length(v)
-        else
-            v[i] += s
+@inline function mul!(C::AbstractMatrix{T1}, S::Shift{T2,true}, s::Number,
+        α::Number=true, β::Number=false) where {T1,T2}
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    @inbounds for ((id, m), vs) in zip(S.d, S.v)
+        val = convert(T1, s * α * sum(v->v[1], vs))
+        for k in diagind(C, id)[m+1:end]
+            C[k] += val
         end
     end
-    return Shift(d, v)
+    return C
 end
 
-function _zdiag(v::T, n::Int, i::Int, m::Int) where T
-    out = fill(v, n-abs(i))
-    m > 0 && (out[1:m] .= zero(T))
-    return out
-end
-
-(S::Shift)(n::Integer) =
-    spdiagm(n, n, (k[1]=>_zdiag(S.v[i], n, k...) for (k, i) in S.d if n-abs(i)>0)...)
-
-eltype(::Type{Shift{T}}) where T = T
-ndims(::Shift) = 2
-has_offset_axes(::Shift) = false
-copy(S::Shift) = Shift(copy(S.d), copy(S.v))
-convert(::Type{Shift{T}}, S::Shift) where T = Shift(S.d, convert(Vector{T}, S.v))
-
-isdiag(S::Shift) = all(k[1]==0 for k in keys(S.d))
-iszero(S::Shift) = iszero(S.v)
-
-function transpose(S::Shift)
-    d = SInd()
-    for (k, i) in S.d
-        d[(-k[1],k[2])] = i
-    end
-    # Values are not copied
-    return Shift(d, S.v)
-end
-
-function _addorsub(S1::Shift, S2::Shift, op)
-    d = copy(S1.d)
-    v = copy(S1.v)
-    for (k, i) in S2.d
-        ind = get(S1.d, k, 0)
-        v2 = S2.v[i]
-        if ind === 0
-            push!(v, op(v2))
-            d[k] = length(v)
-        else
-            v[ind] = op(v[ind], v2)
+@inline function mul!(C::AbstractMatrix{T1}, S::CompositeShift{T2,T2}, s::Number,
+        α::Number=true, β::Number=false) where {T1,T2}
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    @inbounds for ((id, m), v) in zip(S.d, S.v)
+        val = convert(T1, s * α * v)
+        for k in diagind(C, id)[m+1:end]
+            C[k] += val
         end
     end
-    return Shift(d, v)
+    return C
 end
 
-function _addorsub(S::Shift, M::AbstractMatrix, op)
-    r, c = size(M)
-    r == c || throw(ArgumentError("matrix is not square"))
-    out = op(M)
-    @inbounds for (k, i) in S.d
-        id, m = k
-        -r < id < r && m < r - abs(id) || continue
-        d = view(out, diagind(out, id))
-        d[m+1:end] .+= S.v[i]
+@inline function mul!(C::AbstractMatrix{T1}, S::Shift{T2,false}, s::Number,
+        α::Number=true, β::Number=false) where {T1,T2}
+    blocksize(C) == S.size || throw(DimensionMismatch(
+        "C has block size ($(blocksize(C))); while ($(S.size)) is expected"))
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    M, N = S.size
+    @inbounds for j in 1:N
+        for i in 1:M
+            blk = view(C, Block(i, j))
+            for ((id, m), vs) in zip(S.d, S.v)
+                val = convert(T1, s * α * sum(v->v[i,j], vs))
+                for k in diagind(blk, id)[m+1:end]
+                    blk[k] += val
+                end
+            end
+        end
     end
-    return out
+    return C
 end
 
-function _addscale(S1::Shift, sc::Number)
-    d = copy(S1.d)
-    v = copy(S1.v)
-    ind = get(S1.d, (0,0), 0)
-    if ind === 0
-        push!(v, sc)
-        d[(0,0)] = length(v)
-    else
-        v[ind] += sc
+@inline function mul!(C::AbstractMatrix{T1}, S::CompositeShift{T2,Matrix{T2}}, s::Number,
+        α::Number=true, β::Number=false) where {T1,T2}
+    blocksize(C) == S.size || throw(DimensionMismatch(
+        "C has block size ($(blocksize(C))); while ($(S.size)) is expected"))
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    M, N = S.size
+    @inbounds for j in 1:N
+        for i in 1:M
+            blk = view(C, Block(i, j))
+            for ((id, m), v) in zip(S.d, S.v)
+                val = convert(T1, s * α * v[i,j])
+                for k in diagind(blk, id)[m+1:end]
+                    blk[k] += val
+                end
+            end
+        end
     end
-    return Shift(d, v)
+    return C
 end
 
-function _mulind(i::Int, m::Int, j::Int, n::Int)
+(S::Shift{T,true})(n::Integer) where T = mul!(zeros(T, n.*S.size), S, true, true, true)
+(S::CompositeShift{T,T})(n::Integer) where T = mul!(zeros(T, n.*S.size), S, true, true, true)
+
+function (S::Shift{T,false})(n::Integer) where T
+    M, N = S.size
+    out = PseudoBlockMatrix(zeros(T, n*M, n*N), Fill(n, M), Fill(n, N))
+    return mul!(out, S, true, true, true)
+end
+
+function (S::CompositeShift{T,Matrix{T}})(n::Integer) where T
+    M, N = S.size
+    out = PseudoBlockMatrix(zeros(T, n*M, n*N), Fill(n, M), Fill(n, N))
+    return mul!(out, S, true, true, true)
+end
+
+eltype(::Type{<:ShiftOrComp{T}}) where T = T
+ndims(::ShiftOrComp) = 2
+has_offset_axes(::ShiftOrComp) = false
+isdiag(S::ShiftOrComp) = all(x->iszero(x[1]), S.d)
+iszero(S::Shift) = all(x->all(iszero, x), S.v)
+iszero(S::CompositeShift) = all(iszero, S.v)
+
+# Lazy summation that keeps the original value arrays
+# Should only be used for summing across temporal terms
+@inline function (+)(S1::Shift{T}, S2::Shift{T}) where T
+    S1.size == S2.size || throw(DimensionMismatch())
+    D = copy(S1.d)
+    V = [copy(v) for v in S1.v]
+    for (i, d) in enumerate(S2.d)
+        k = findfirst(x->x==d, D)
+        if k === nothing
+            push!(D, d)
+            push!(V, copy(S2.v[i]))
+        else
+            append!(V[k], S2.v[i])
+        end
+    end
+    return Shift(D, V, S1.size)
+end
+
+(+)(S::Shift) = S
+
+function (*)(S::Shift{T,true}, s::Number) where T
+    D = copy(S.d)
+    V = [s * sum(v->v[1], vs) for vs in S.v]
+    return CompositeShift(D, V, S.size)
+end
+
+function (*)(S::Shift{T,false}, s::Number) where T
+    D = copy(S.d)
+    V = [rmul!(sum(vs), s) for vs in S.v]
+    return CompositeShift(D, V, S.size)
+end
+
+(*)(s::Number, S::Shift) = S * s
+
+@inline function _mulind(i::Int, m::Int, j::Int, n::Int)
     k = i + j
     l = ifelse(isless(i, 0),
             ifelse(isless(0, j),
@@ -119,49 +156,113 @@ function _mulind(i::Int, m::Int, j::Int, n::Int)
     return k, l
 end
 
-(+)(S::Shift) = copy(S)
-(+)(S1::Shift, S2::Shift) = _addorsub(S1, S2, +)
-(+)(S::Shift, M::AbstractMatrix) = _addorsub(S, M, +)
-(+)(M::AbstractMatrix, S::Shift) = S + M
-
-(-)(S::Shift) = Shift(copy(S.d), -S.v)
-(-)(S1::Shift, S2::Shift) = _addorsub(S1, S2, -)
-(-)(S::Shift, M::AbstractMatrix) = _addorsub(S, M, -)
-(-)(M::AbstractMatrix, S::Shift) = M + (-S)
-
-(*)(S::Shift, x::Number) = Shift(copy(S.d), S.v*x)
-(*)(x::Number, S::Shift) = S * x
-(/)(S::Shift, x::Number) = Shift(copy(S.d), S.v/x)
-
-function (*)(S1::Shift, S2::Shift)
-    d = SInd()
-    v = eltype(S1)[]
-    for (im, i1) in S1.d
-        for (jn, i2) in S2.d
-            kl = _mulind(im[1], im[2], jn[1], jn[2])
-            p = S1.v[i1] * S2.v[i2]
-            ind = get(d, kl, 0)
-            if ind === 0
-                push!(v, p)
-                d[kl] = length(v)
+@inline function mul!(S::CompositeShift{T,T}, S1::Shift{T,true},
+        S2::CompositeShift{T,T}, α::Number, β::Number) where T
+    D = S.d
+    V = S.v
+    for (i1, (id1, m1)) in enumerate(S1.d)
+        for (i2, (id2, m2)) in enumerate(S2.d)
+            kl = _mulind(id1, m1, id2, m2)
+            k = findfirst(x->x==kl, D)
+            if k === nothing
+                push!(D, kl)
+                push!(V, α * sum(v->v[1], S1.v[i1]) * S2.v[i2])
             else
-                v[ind] = p
+                V[k] = β * V[k] + α * sum(v->v[1], S1.v[i1]) * S2.v[i2]
             end
         end
     end
-    return Shift(d, v)
+    return S
 end
 
-@inline function mul!(C::AbstractVecOrMat, S::Shift, B::AbstractVecOrMat, α::Number, β::Number)
+@inline function mul!(S::CompositeShift{T,T}, S1::Shift{T,true}, s::Number,
+        α::Number, β::Number) where T
+    D = S.d
+    V = S.v
+    for (i1, d) in enumerate(S1.d)
+        k = findfirst(x->x==d, D)
+        if k === nothing
+            push!(D, d)
+            push!(V, α * sum(v->v[1], S1.v[i1]) * s)
+        else
+            V[k] = β * V[k] + α * sum(v->v[1], S1.v[i1]) * s
+        end
+    end
+    return S
+end
+
+@inline function mul!(S::CompositeShift{T,Matrix{T}}, S1::Shift{T,false},
+        S2::CompositeShift{T,Matrix{T}}, α::Number, β::Number) where T
+    D = S.d
+    V = S.v
+    M = S1.size[1]
+    N = S2.size[2]
+    for (i1, (id1, m1)) in enumerate(S1.d)
+        for (i2, (id2, m2)) in enumerate(S2.d)
+            kl = _mulind(id1, m1, id2, m2)
+            k = findfirst(x->x==kl, D)
+            if k === nothing
+                push!(D, kl)
+                m = zeros(T, M, N)
+                for l in 1:length(S1.v)
+                    mul!(m, S1.v[i1][l], S2.v[i2], α, true)
+                end
+                push!(V, m)
+            else
+                m = V[k]
+                mul!(m, S1.v[i1][l], S2.v[i2], α, β)
+                for l in 2:length(S1.v)
+                    mul!(m, S1.v[i1][l], S2.v[i2], α, true)
+                end
+            end
+        end
+    end
+    return S
+end
+
+@inline function mul!(S::CompositeShift{T,Matrix{T}}, S1::Shift{T,false}, s::Number,
+        α::Number, β::Number) where T
+    D = S.d
+    V = S.v
+    M = S1.size[1]
+    N = S2.size[2]
+    for (i1, d) in enumerate(S1.d)
+        k = findfirst(x->x==d, D)
+        if k === nothing
+            push!(D, d)
+            m = zeros(T, M, N)
+            for l in 1:length(S1.v)
+                mul!(m, S1.v[i1][l], s, α, true)
+            end
+            push!(V, m)
+        else
+            m = V[k]
+            mul!(m, S1.v[i1][l], s, α, β)
+            for l in 2:length(S1.v)
+                mul!(m, S1.v[i1][l], s, α, true)
+            end
+        end
+    end
+    return S
+end
+
+# ! To do: consider cases between row/column vector and scalar
+(*)(S1::Shift{T,true}, S2::CompositeShift{T,T}) where T =
+    mul!(CompositeShift(Tuple{Int,Int}[], T[], (1,1)), S1, S2, true, true)
+
+(*)(S1::Shift{T,false}, S2::CompositeShift{T,Matrix{T}}) where T =
+    mul!(CompositeShift(Tuple{Int,Int}[], Matrix{T}[], (S1.size[1],S2.size[2])),
+        S1, S2, true, true)
+
+@inline function mul!(C::AbstractVecOrMat{T1}, S::Shift{T2,true}, B::AbstractVecOrMat,
+        α::Number, β::Number) where {T1,T2}
     # C could contain NaN
-    iszero(β) ? fill!(C, zero(eltype(C))) : rmul!(C, β)
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
     # Need to call size twice in case B is a Vector
     r, c = size(B, 1), size(B, 2)
-    @inbounds for (k, i) in S.d
-        id, m = k
+    @inbounds for (k, (id, m)) in enumerate(S.d)
         -r < id < r && m < r - abs(id) || continue
-        v = α * S.v[i]
-        # Avoid branching
+        v = convert(T1, α * sum(v->v[1], S.v[k]))
         adj1 = min(id, 0)
         adj2 = max(id, 0)
         for j in 1:c
@@ -173,105 +274,106 @@ end
     return C
 end
 
-(*)(S::Shift, B::AbstractVecOrMat) = mul!(similar(B), S, B, true, false)
-
-function ==(S1::Shift, S2::Shift)
-    length(S1.v) == length(S2.v) || return false
-    for (k1, i1) in S1.d
-        i2 = get(S2.d, k1, 0)
-        i2 === 0 && return false
-        S1.v[i1] == S2.v[i2] || return false
+@inline function mul!(C::AbstractVecOrMat{T1}, S::CompositeShift{T2,T2}, B::AbstractVecOrMat,
+        α::Number, β::Number) where {T1,T2}
+    # C could contain NaN
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    # Need to call size twice in case B is a Vector
+    r, c = size(B, 1), size(B, 2)
+    @inbounds for (k, (id, m)) in enumerate(S.d)
+        -r < id < r && m < r - abs(id) || continue
+        v = convert(T1, α * S.v[k])
+        adj1 = min(id, 0)
+        adj2 = max(id, 0)
+        for j in 1:c
+            for i in m+1-adj1:r-adj2
+                C[i,j] += v * B[i+id,j]
+            end
+        end
     end
-    return true
+    return C
 end
 
-struct ShiftMap{T} <: LinearMap{T}
-    S::Shift{T}
-    N::Int
-    function ShiftMap(S::Shift{T}, N::Int) where T
-        N > 0 || throw(ArgumentError("size of ShiftMap must be positive"))
-        return new{T}(S, N)
+@inline function mul!(C::AbstractVecOrMat{T1}, S::Shift{T2,false}, B::AbstractVecOrMat,
+        α::Number, β::Number) where {T1,T2}
+    Mc, Nc = blocksize(C)
+    M, N = S.size
+    # Need to call size twice in case B is a Vector
+    Mb, Nb = blocksize(B, 1), blocksize(B, 2)
+    Mc == S.size[1] && Nc == Nb && Mb == S.size[2] || throw(DimensionMismatch())
+    # C could contain NaN
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    @inbounds for j in 1:N
+        for jb in 1:Nb
+            Bblk = view(B, Block(j, jb))
+            r, c = size(Bblk, 1), size(Bblk, 2)
+            for i in 1:M
+                for (k, (id, m)) in enumerate(S.d)
+                    -r < id < r && m < r - abs(id) || continue
+                    v = convert(T1, α * sum(v->v[i,j], S.v[k]))
+                    adj1 = min(id, 0)
+                    adj2 = max(id, 0)
+                    for jc in 1:Nc
+                        Cblk = view(C, Block(is, jc))
+                        for jj in 1:c
+                            for ii in m+1-adj1:r-adj2
+                                Cblk[ii,jj] += v * Bblk[ii+id,jj]
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
+    return C
 end
 
-LinearMap(S::Shift, N::Int) = ShiftMap(S, N)
-
-size(S::ShiftMap) = (S.N, S.N)
-MulStyle(::ShiftMap) = FiveArg()
-==(S1::ShiftMap, S2::ShiftMap) = S1.S == S2.S && S1.N == S2.N
-
-transpose(S::ShiftMap) = ShiftMap(transpose(S.S), S.N)
-
-_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector) =
-    mul!(C, S.S, B)
-
-_unsafe_mul!(C::AbstractMatrix, S::ShiftMap, B::AbstractMatrix) =
-    mul!(C, S.S, B)
-
-_unsafe_mul!(C::AbstractVecOrMat, S::ShiftMap, B::AbstractVector, α::Number, β::Number) =
-    mul!(C, S.S, B, α, β)
-
-# Needed for avoiding method ambiguity
-_unsafe_mul!(C::AbstractMatrix, S::ShiftMap, B::AbstractMatrix, α::Number, β::Number) =
-    mul!(C, S.S, B, α, β)
-
-(+)(S1::ShiftMap, S2::ShiftMap) =
-    S1.N==S2.N ? ShiftMap(S1.S+S2.S, S1.N) : throw(DimensionMismatch())
-(-)(S1::ShiftMap, S2::ShiftMap) =
-    S1.N==S2.N ? ShiftMap(S1.S-S2.S, S1.N) : throw(DimensionMismatch())
-(*)(x::Union{Real,Complex}, S::ShiftMap{T}) where T<:Union{Real,Complex} =
-    ShiftMap(x*S.S, S.N)
-(*)(S::ShiftMap{T}, x::Union{Real,Complex}) where T<:Union{Real,Complex} = x * S
-
-function (*)(S1::ShiftMap, S2::ShiftMap)
-    check_dim_mul(S1, S2)
-    return ShiftMap(S1.S*S2.S, S1.N)
-end
-
-(+)(S::ShiftMap, A::UniformScalingMap) =
-    S.N==A.M ? ShiftMap(_addscale(S.S, A.λ), S.N) : throw(DimensionMismatch())
-
-(+)(A::UniformScalingMap, S::ShiftMap) = S + A
-
-function (*)(S::ShiftMap, A::UniformScalingMap)
-    S.N==A.M || throw(DimensionMismatch())
-    if iszero(A.λ)
-        return A
-    else
-        return ShiftMap(S.S*A.λ, S.N)
+@inline function mul!(C::AbstractVecOrMat{T1}, S::CompositeShift{T2,Matrix{T2}},
+        B::AbstractVecOrMat, α::Number, β::Number) where {T1,T2}
+    Mc, Nc = blocksize(C)
+    M, N = S.size
+    # Need to call size twice in case B is a Vector
+    Mb, Nb = blocksize(B, 1), blocksize(B, 2)
+    Mc == S.size[1] && Nc == Nb && Mb == S.size[2] || throw(DimensionMismatch())
+    # C could contain NaN
+    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
+    @inbounds for j in 1:N
+        for jb in 1:Nb
+            Bblk = view(B, Block(j, jb))
+            r, c = size(Bblk, 1), size(Bblk, 2)
+            for i in 1:M
+                for (k, (id, m)) in enumerate(S.d)
+                    -r < id < r && m < r - abs(id) || continue
+                    v = convert(T1, α * S.v[k][i,j])
+                    adj1 = min(id, 0)
+                    adj2 = max(id, 0)
+                    for jc in 1:Nc
+                        Cblk = view(C, Block(is, jc))
+                        for jj in 1:c
+                            for ii in m+1-adj1:r-adj2
+                                Cblk[ii,jj] += v * Bblk[ii+id,jj]
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
+    return C
 end
 
-(*)(A::UniformScalingMap, S::ShiftMap) = S * A
+(*)(S::Union{<:Shift{T1,true}, CompositeShift{T1,T1}},
+    B::AbstractVecOrMat{T2}) where {T1,T2} =
+        mul!(zeros(promote_type(T1,T2), size(B)), S, B, true, true)
 
-# Avoid generating LinearMaps.LinearCombination
-(+)(A1::UniformScalingMap, A2::UniformScalingMap) =
-    A1.M==A2.M ? UniformScalingMap(A1.λ+A2.λ, A1.M) : throw(DimensionMismatch())
-
-# Avoid generating LinearMaps.CompositeMap
-(*)(A1::UniformScalingMap, A2::UniformScalingMap) =
-    A1.M==A2.M ? UniformScalingMap(A1.λ*A2.λ, A1.M) : throw(DimensionMismatch())
-
-function (*)(A::CompositeMap{T}, S::ShiftMap{T}) where T
-    Afirst = first(A.maps)
-    if Afirst isa ShiftMap
-        Afirst.N == S.N || throw(DimensionMismatch())
-        A2 = ShiftMap(Afirst.S*S.S, S.N)
-        return CompositeMap{T}(tuple(A2, Base.tail(A.maps)...))
-    else
-        return CompositeMap{T}(tuple(S, A.maps...))
-    end
+function (*)(S::Union{<:Shift{T1,false}, CompositeShift{T1,Matrix{T1}}},
+        B::AbstractVecOrMat{T2}) where {T1,T2}
+    M = S.size[1]
+    T = promote_type(T1,T2)
+    bsizes = blocksizes(B)
+    n = bsizes[1][1]
+    all(==(n), bsizes[1]) && all(==(n), bsizes[2]) || throw(ArgumentError(
+        "each block in B must have the same size"))
+    out = PseudoBlockMatrix(zeros(T, n*M, size(B,2)), Fill(n, M), Fill(n, blocksize(B,2)))
+    return mul!(out, S, B, true, true)
 end
-
-function (*)(S::ShiftMap{T}, A::CompositeMap{T}) where T
-    Alast = last(A.maps)
-    if Alast isa ShiftMap
-        Alast.N == S.N || throw(DimensionMismatch())
-        A2 = ShiftMap(S.S*Alast.S, S.N)
-        return CompositeMap{T}(tuple(Base.front(A.maps)..., A2))
-    else
-        return CompositeMap{T}(tuple(A.maps..., S))
-    end
-end
-
-zero(S::LinearMap{T}) where T = LinearMap(UniformScaling(zero(T)), size(S,2))

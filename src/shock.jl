@@ -40,11 +40,12 @@ function _addssval!(out::VecOrMat, vs::AbstractArray, T::Int)
     end
 end
 
-function simulate!(out::AbstractVecOrMat, gj::GEJacobian, exovar::Symbol, endovar::Symbol,
+function simulate!(out::AbstractVecOrMat, gs::GMaps, exovar::Symbol, endovar::Symbol,
         dX::AbstractVecOrMat, ε::AbstractVecOrMat, shockirf::AbstractVecOrMat;
         addssval::Bool=true)
+    gj = gs.gj
     nT = gj.nTfull
-    G = getM!(gj, exovar, endovar)
+    G = gs[exovar, endovar]
     N = size(ε, 2)
     if N == 1
         mul!(dX, G, shockirf)
@@ -62,10 +63,10 @@ function simulate!(out::AbstractVecOrMat, gj::GEJacobian, exovar::Symbol, endova
     return out
 end
 
-function simulate(gj::GEJacobian{T1}, exovar::Symbol, endovar::Symbol,
+function simulate(gs::GMaps{T1}, exovar::Symbol, endovar::Symbol,
         ε::AbstractVecOrMat{T2}, shocks; kwargs...) where {T1,T2}
-    G = getG!(gj, exovar, endovar)
-    Nout = G isa Matrix || G isa MatMulMap ? size(G,1) : 1
+    gj = gs.gj
+    Nout = length(gj.tjac.varvals[endovar])
     Nin = size(ε, 2)
     T = size(ε,1) - gj.nTfull + 1
     T < 1 && throw(ArgumentError("length of shocks is smaller than $(gj.nTfull)"))
@@ -84,6 +85,6 @@ function simulate(gj::GEJacobian{T1}, exovar::Symbol, endovar::Symbol,
             impulse!(view(shockirf,:,i), shocks[i])
         end
     end
-    simulate!(out, gj, exovar, endovar, dX, ε, shockirf; kwargs...)
+    simulate!(out, gs, exovar, endovar, dX, ε, shockirf; kwargs...)
     return out
 end

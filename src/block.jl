@@ -80,38 +80,115 @@ function steadystate!(b::SimpleBlock, varvals::NamedTuple)
     return merge(varvals, vals)
 end
 
-jacbyinput(::SimpleBlock) = true
+abstract type AbstractBlockJacobian{TF} end
 
-function f_partial!(b::SimpleBlock, varvals, fx, x, ::Val{i}) where i
-    ins = inputs(b)
-    r = b.f(map(k->getfield(varvals, k), ins[1:i-1])..., x,
-        map(k->getfield(varvals, k), ins[i+1:length(ins)])...)
-    for (k, v) in enumerate(Iterators.flatten(r))
-        fx[k] = v
+struct ArrayToArgs{cumwidths}
+    function ArrayToArgs(cumwidths::NTuple{N,Int}) where N
+        N >= 1 || throw(ArgumentError("length of cumwidths must be at least 1"))
+        return new{cumwidths}()
     end
+end
+
+function (aa::ArrayToArgs{W})(A::AbstractArray) where W
+    if @generated
+        i0 = 0
+        ex = :()
+        for w in W
+            i0 < w || error("invalid cumwidths $W")
+            push!(ex.args, i0+1 < w ? :(view(A, $(i0+1):$w)) : :(A[$(i0+1)]))
+            i0 = w
+        end
+        return ex
+    else
+        i0 = 0
+        args = ()
+        for w in W
+            i0 < w || error("invalid cumwidths $W")
+            args = i0+1 < w ? (args..., view(A, i0+1:w)) : (args..., A[i0+1])
+            i0 = w
+        end
+        return args
+    end
+end
+
+struct PartialF{F<:Function, TF<:Real, I}
+    f::F
+    inds::Vector{Int}
+    vals::Vector{TF}
+    toargs::ArrayToArgs{I}
+end
+
+function (g::PartialF)(fx::AbstractVector, xs)
+    length(xs) == length(g.inds) || throw(ArgumentError(
+        "expect input xs of length $(length(g.inds)); got $(length(xs))"))
+    vals = g.vals
+    for (i, x) in zip(g.inds, xs)
+        vals[i] = x
+    end
+    r = g.f(g.toargs(vals)...)
+    copyto!(fx, Iterators.flatten(r))
     return fx
 end
 
-function jacobian(b::SimpleBlock, Vi::Val{i}, nT::Int, varvals::NamedTuple,
-        TF::Type=Float64) where i
-    ins = inputs(b)
-    val = varvals[ins[i]]
-    # Array variables should have existed in varvals
-    no = outlength(b, varvals)
-    J = Matrix{TF}(undef, no, length(val))
-    f!(fx, x) = f_partial!(b, varvals, fx, x, Vi)
-    if val isa Real
-        finite_difference_gradient!(J, f!, convert(TF,val))
-    else
-        finite_difference_jacobian!(J, f!, view(val,:))
-    end
-    return J
+const PseudoBlockMat{TF} = PseudoBlockMatrix{TF, Matrix{TF}, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+
+struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, PF<:PartialF, FD} <: AbstractBlockJacobian{TF}
+    blk::BLK
+    J::PseudoBlockMat{TF}
+    x::Vector{TF}
+    iins::Vector{Int}
+    nT::Int
+    g::PF
+    fdcache::FD
 end
 
-function getjacmap(b::SimpleBlock, J::Matrix,
-        i::Int, ii::Int, r::Int, rr::Int, r0::Int, nT::Int)
-    j = J[r0+rr,ii]
-    return ShiftMap(Shift(shift(invars(b)[i]), j), nT), iszero(j)
+function (j::SimpleBlockJacobian)(varvals::NamedTuple)
+    b = j.blk
+    invals = map(k->getfield(varvals, k), inputs(b))
+    copyto!(j.g.vals, Iterators.flatten(invals))
+    copyto!(j.x, Iterators.flatten((invals[i] for i in j.iins)))
+    finite_difference_jacobian!(j.J.blocks, j.g, j.x, j.fdcache)
+    return j
+end
+
+function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, outwidths, nT::Int,
+        TF::Type)
+    widths = map(length, invals)
+    cumwidths = cumsum(widths)
+    toargs = ArrayToArgs(cumwidths)
+    ni = cumwidths[end]
+    vals = Vector{TF}(undef, ni)
+    cuts = (0, cumwidths...)
+    iins = collect(iins)
+    inds = Vector{Int}(undef, sum(i->widths[i], iins))
+    i = 1
+    for j in iins
+        for k in cuts[j]+1:cuts[j+1]
+            inds[i] = k
+            i += 1
+        end
+    end
+    g = PartialF(b.f, inds, vals, toargs)
+    # Array variables should have existed in varvals
+    nii = length(inds)
+    no = sum(outwidths)
+    J = Matrix{TF}(undef, no, nii)
+    fdcache = JacobianCache(Vector{TF}(undef, nii), Vector{TF}(undef, no))
+    BJ = PseudoBlockMatrix(J, collect(outwidths), [widths[i] for i in iins])
+    x = collect(TF, Iterators.flatten((invals[i] for i in iins)))
+    return SimpleBlockJacobian(b, BJ, x, iins, nT, g, fdcache)
+end
+
+function jacobian(b::SimpleBlock, iins, nT::Int, varvals::NamedTuple, TF::Type=Float64)
+    invals = map(k->getfield(varvals, k), inputs(b))
+    outwidths = map(k->length(getfield(varvals, k)), outputs(b))
+    j = SimpleBlockJacobian(b, iins, invals, outwidths, nT, TF)
+    return j(varvals)
+end
+
+@inline function getindex(j::SimpleBlockJacobian, r::Int, i::Int)
+    v = view(j.J, Block(r, i))
+    return Shift([(shift(invars(j.blk)[j.iins[i]]), 0)], [[v]], size(v))
 end
 
 _shift(p::Real, s::Int, nT::Int) = p
@@ -153,4 +230,18 @@ function show(io::IO, ::MIME"text/plain", b::SimpleBlock)
     fname = String(typeof(b).parameters[1].name.name)[2:end]
     println(io, "SimpleBlock($fname):")
     _showinouts(io, b)
+end
+
+function _show_jac_from_to(io::IO, j::AbstractBlockJacobian)
+    ins = inputs(j.blk)
+    join(io, map(i->ins[i], j.iins), ", ")
+    print(io, " → ")
+    join(io, outputs(j.blk), ", ")
+end
+
+function show(io::IO, j::SimpleBlockJacobian{BLK}) where BLK
+    fname = String(BLK.parameters[1].name.name)[2:end]
+    print(io, "SimpleBlockJacobian(", fname, ": ")
+    _show_jac_from_to(io, j)
+    print(io, ')')
 end

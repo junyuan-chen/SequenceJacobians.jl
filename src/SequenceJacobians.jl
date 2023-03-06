@@ -2,14 +2,17 @@ module SequenceJacobians
 
 using AutoregressiveModels: ARMAProcess
 using Base: RefValue, ReshapedArray
+using BlockArrays: BlockMatrix, PseudoBlockMatrix, Block, BlockedUnitRange, mortar,
+    blocksize, blocksizes
 using Distributions: Distribution, logpdf
 using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
-using FiniteDiff: finite_difference_gradient!, finite_difference_jacobian!,
-    GradientCache, default_relstep, HessianCache, finite_difference_hessian!
-using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, Factorization, LU, lu!,
-    Hermitian, cholesky!, ldiv!, norm, dot, stride1, diag
-using LinearMaps: WrappedMap
+using FillArrays: Fill, Zeros
+using FiniteDiff: JacobianCache, finite_difference_jacobian!, GradientCache,
+    finite_difference_gradient!, HessianCache, finite_difference_hessian!, default_relstep
+using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs,
+    dfs_parents
+using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, LU, lu!, rmul!,
+    Hermitian, cholesky!, ldiv!, norm, dot, stride1, diag, diagind
 using LogDensityProblems: LogDensityOrder
 using MacroTools
 using MacroTools: postwalk
@@ -23,11 +26,12 @@ using TransformedLogDensities: TransformedLogDensity
 using Tullio: @tullio
 
 import AutoregressiveModels: simulate!, simulate, impulse!, impulse
-import Base: ==, eltype, zero, show, convert, Matrix, parent, getindex
+import Base: ==, eltype, show, Matrix, parent, getindex, copy, convert, iterate, length,
+    ndims, has_offset_axes, zero, iszero, +, *
 import CommonSolve: solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
-import LinearMaps: check_dim_mul
+import LinearAlgebra: isdiag, mul!
 import LogDensityProblems: capabilities, dimension, logdensity, logdensity_and_gradient
 import StatsAPI: vcov, stderror
 import StatsBase: mode
@@ -51,12 +55,13 @@ export supconverged,
        acceptance_rate,
 
        Shift,
-       Lag,
-       Lead,
-       ShiftMap,
+       CompositeShift,
 
-       MatMulMap,
-       mapmatmul,
+       VarJacobian,
+       AbstractJacobianMap,
+       ShiftMap,
+       MatrixMap,
+       jacmap,
 
        NoRootSolver,
        isvectorrootsolver,
@@ -80,6 +85,8 @@ export supconverged,
        SimpleBlock,
        block,
        steadystate!,
+       AbstractBlockJacobian,
+       SimpleBlockJacobian,
        jacobian,
        transition!,
 
@@ -130,6 +137,7 @@ export supconverged,
 
        HetBlock,
        HetAgentJacCache,
+       HetBlockJacobian,
 
        BlockOrVar,
        SequenceSpaceModel,
@@ -157,12 +165,12 @@ export supconverged,
 
        TotalJacobian,
        GEJacobian,
-       getG!,
-       getM!,
+       GEJacobianUpdatePlan,
+       plan,
+       GMaps,
 
        CombinedBlock,
-
-       SolvedBlock,
+       CombinedBlockJacobian,
 
        @simple,
        @implicit,
@@ -203,7 +211,7 @@ export supconverged,
 
 include("utils.jl")
 include("shift.jl")
-include("mapmatmul.jl")
+include("jacmap.jl")
 include("solvers/interface.jl")
 include("block.jl")
 include("hetagent.jl")
@@ -212,7 +220,6 @@ include("hetblock.jl")
 include("model.jl")
 include("jacobian.jl")
 include("combinedblock.jl")
-include("solvedblock.jl")
 include("macros.jl")
 include("transition.jl")
 include("irf.jl")
