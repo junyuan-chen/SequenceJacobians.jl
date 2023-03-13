@@ -2,17 +2,17 @@ module SequenceJacobians
 
 using AutoregressiveModels: ARMAProcess
 using Base: RefValue, ReshapedArray
-using BlockArrays: BlockMatrix, PseudoBlockMatrix, Block, BlockedUnitRange, mortar,
-    blocksize, blocksizes
+using BlockArrays: BlockMatrix, PseudoBlockMatrix, PseudoBlockVector, Block,
+    BlockedUnitRange, mortar, blocksize, blocksizes, MemoryLayout, _copyto!
 using Distributions: Distribution, logpdf
 using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
+using FastLapackInterface: LUWs
 using FillArrays: Fill, Zeros
 using FiniteDiff: JacobianCache, finite_difference_jacobian!, GradientCache,
     finite_difference_gradient!, HessianCache, finite_difference_hessian!, default_relstep
-using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs,
-    dfs_parents
-using LinearAlgebra: BLAS, I, UniformScaling, Diagonal, LU, lu!, rmul!,
-    Hermitian, cholesky!, ldiv!, norm, dot, stride1, diag, diagind
+using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
+using LinearAlgebra: BLAS, LAPACK, I, UniformScaling, Diagonal, LU, lu!, rmul!,
+    Hermitian, cholesky!, ldiv!, inv!, norm, dot, stride1, diag, diagind
 using LogDensityProblems: LogDensityOrder
 using MacroTools
 using MacroTools: postwalk
@@ -207,7 +207,9 @@ export supconverged,
        logposterior!,
        logposterior_and_gradient!,
        logdensity_hessian!,
-       vcov!
+       vcov!,
+
+       MinimumDistance
 
 include("utils.jl")
 include("shift.jl")
@@ -226,6 +228,7 @@ include("irf.jl")
 include("allcov.jl")
 include("shock.jl")
 include("bayesian.jl")
+include("mindist.jl")
 include("examples/utils.jl")
 include("examples/rbc.jl")
 include("examples/KrusellSmith.jl")

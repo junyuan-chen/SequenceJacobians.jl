@@ -143,8 +143,7 @@ struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, PF<:PartialF, FD} <: AbstractBl
 end
 
 function (j::SimpleBlockJacobian)(varvals::NamedTuple)
-    b = j.blk
-    invals = map(k->getfield(varvals, k), inputs(b))
+    invals = map(k->getfield(varvals, k), inputs(j.blk))
     copyto!(j.g.vals, Iterators.flatten(invals))
     copyto!(j.x, Iterators.flatten((invals[i] for i in j.iins)))
     finite_difference_jacobian!(j.J.blocks, j.g, j.x, j.fdcache)

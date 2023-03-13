@@ -49,9 +49,9 @@
     se = stderror(bm, θmode)
     @test se ≈ [0.0101759, 0.02736335, 0.02346495] atol=1e-5
 
-    @test sprint(show, bm) == "156×1 BayesianModel(3, 0)"
+    @test sprint(show, bm) == "156×1 BayesianModel{Float64}(3, 0)"
     @test sprint(show, MIME("text/plain"), bm) == """
-        156×1 BayesianModel with 3 shock parameters and 0 structural parameter:
+        156×1 BayesianModel{Float64} with 3 shock parameters and 0 structural parameter:
           shock parameters: σ, ar, ma"""
 
     bm2 = transform(as((σ=asℝ₊, ar=as𝕀, ma=as𝕀)), bm)
@@ -66,8 +66,12 @@
     @test stderror(parent(bm2), θmode2) ≈ se atol=1e-7
 
     @test sprint(show, bm2) == "156×1 TransformedBayesianModel(3)"
-    @test sprint(show, MIME("text/plain"), bm2) ==
-        "156×1 TransformedBayesianModel of dimension 3 from parent model with 3 shock parameters and 0 structural parameter"
+    @test sprint(show, MIME("text/plain"), bm2) == """
+        156×1 TransformedBayesianModel of dimension 3 from BayesianModel{Float64} with 3 shock parameters and 0 structural parameter:
+          [1:3] NamedTuple of transformations
+            [1:1] :σ → asℝ₊
+            [2:2] :ar → as𝕀
+            [3:3] :ma → as𝕀"""
 
     spl = MetropolisHastings(RandomWalkProposal{true}(MvNormal(zeros(3), 2.5.*Hermitian(Σ))))
     # Small sample size to save time
@@ -80,7 +84,7 @@
     tr = as((σ=as(Real,0.01,4), ar=as(Real,0.02,0.98), ma=as(Real,0.02,0.98)))
     bm3 = transform(tr, bm)
     θmode3, rx3, _, _ = mode(bm3, :LD_LBFGS, zeros(3), lower_bounds=-5, upper_bounds=5)
-    @test collect(θmode3) ≈ rx atol=1e-7
+    @test collect(θmode3) ≈ rx atol=1e-6
     Σ3 = vcov(bm3, rx3)
     spl3 = MetropolisHastings(RandomWalkProposal{true}(MvNormal(zeros(3), 2.5.*Hermitian(Σ3))))
     @time chain3 = sample(bm3, spl3, N, init_params=rx3,

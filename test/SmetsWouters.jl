@@ -118,10 +118,67 @@
     @test collect(θmode1) ≈ rx atol=1e-4
 
     p = plan(gj, :ρ)
+    @test sprint(show, p) == "GEJacobianUpdatePlan(1)"
+    @test sprint(show, MIME("text/plain"), p) == """
+        GEJacobianUpdatePlan with 1 block jacobian:
+          CombinedBlockJacobian(taylor_r: πp, y, yf, εi → i)"""
+    p = plan(gj, :α)
     @test sprint(show, p) == "GEJacobianUpdatePlan(2)"
     @test sprint(show, MIME("text/plain"), p) == """
         GEJacobianUpdatePlan with 2 block jacobians:
-          CombinedBlockJacobian(taylor_r: πp, y, yf, εi → i)
-          SimpleBlockJacobian(fisher: i, r, πp, πp → fisher_r)"""
+          CombinedBlockJacobian(k_r_f, rk_r_f, q_r_f, I_r_f: εI, rf, εb, nf, wf, εa → If, qf, rkf, kf, ksf, zf, yf, μp_f)
+          CombinedBlockJacobian(k_r, rk_r, q_r, I_r: εI, r, εb, n, w, εa → I, q, rk, k, ks, z, y, μp)"""
     @test sprint(show, gs) == "GMaps{Float64}(εa, εb, εg, εI, εi, εp, εw)"
+
+    εi = zeros(T, 1)
+    εi[1] = 1
+    j1 = TotalJacobian(m, vcat(endos, exos), tars, ss[], T, dZs=[:εi=>εi])
+    @test j1.totals[:εi][:i].out ≈ j1.parts[:i][:εi][:,1]
+    gj1 = GEJacobian(j1, :εi, endos)
+    gs1 = GMaps(gj1)
+    vobs = [:y, :I, :c, :i, :n, :w]
+    vars = [:εi=>vobs]
+    nobs = length(vobs)
+    irfs = PseudoBlockVector(Vector{Float64}(undef, 16*nobs), fill(16, nobs))
+    tarvals = similar(irfs)
+    for (i, n) in enumerate(vobs)
+        gs1(view(tarvals, Block(i)), :εi, n)
+    end
+    md = MinimumDistance(gs1, :ρ, vars, irfs, tarvals.blocks, ones(length(tarvals)))
+    @test md[] == (ρ=0.875,)
+    params, counter, r = solve!(md, :LD_LBFGS, [0.6], lower_bounds=0.5, upper_bounds=0.9)
+    @test params.ρ ≈ 0.875 atol=1e-7
+    @test vcov(md)[1] ≈ 0.00012397999374007937 atol=1e-9
+
+    εa = zeros(T, 1)
+    εi[1] = 1
+    j2 = TotalJacobian(m, vcat(endos, [:εa, :εi]), tars, ss[], T, dZs=[:εa=>εa, :εi=>εi])
+    gj2 = GEJacobian(j2, (:εa, :εi), endos)
+    gs2 = GMaps(gj2)
+    vars = [:εa=>vobs, :εi=>vobs]
+    irfs = PseudoBlockVector(Vector{Float64}(undef, 32*nobs), fill(16, 2*nobs))
+    tarvals = similar(irfs)
+    i = 1
+    for (exo, vobs) in vars
+        for n in vobs
+            gs2(view(tarvals, Block(i)), exo, n)
+            i += 1
+        end
+    end
+    md2 = MinimumDistance(gs2, (:α, :ρ), vars, irfs, tarvals.blocks, ones(length(tarvals)))
+    params, counter, r = solve!(md2, :LD_LBFGS, [0.4, 0.6],
+        lower_bounds=[0.1, 0.5], upper_bounds=[0.5, 0.9])
+    @test md2[:α] ≈ 0.197 atol=1e-6
+    @test md2[:ρ] ≈ 0.875 atol=1e-6
+    @test vcov(md2) ≈ [0.116598 -0.00275197; -0.00275197 0.000188933] atol=1e-5
+    @test stderror(md2) ≈ [0.34146400081235834, 0.013745288936911307] atol=1e-7
+
+    @test sprint(show, md) == "96×1 MinimumDistance{Float64}(1)"
+    @test sprint(show, MIME("text/plain"), md) == """
+        96×1 MinimumDistance{Float64} with 1 exogenous variable:
+          parameter: ρ"""
+    @test sprint(show, md2) == "192×2 MinimumDistance{Float64}(2)"
+    @test sprint(show, MIME("text/plain"), md2) == """
+        192×2 MinimumDistance{Float64} with 2 exogenous variables:
+          parameters: α, ρ"""
 end

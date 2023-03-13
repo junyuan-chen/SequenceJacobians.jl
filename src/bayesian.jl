@@ -1,19 +1,23 @@
-struct BayesianModel{NT<:NamedTuple, PR<:Tuple, SH<:Tuple, TF<:AbstractFloat,
+abstract type AbstractEstimator{TF<:AbstractFloat, NT<:NamedTuple} end
+
+struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3, P,
         GJ<:GEJacobian{TF}, TC<:AbstractAllCovCache, TE<:Union{AbstractVector{TF},Nothing},
-        GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple, N1, N2, N3}
+        GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple} <: AbstractEstimator{TF, NT}
     shockses::NTuple{N1,Symbol}
     shockparas::NTuple{N2,Symbol}
     strucparas::NTuple{N3,Symbol}
     priors::PR
     lookuppara::Dict{Symbol,NTuple{3,Int}}
+    exovars::Vector{Symbol}
     observables::Vector{Pair}
     lookupobs::Dict{Symbol,Int}
     paravals::RefValue{NT}
-    gj::GJ
+    plan::P
+    gs::GMaps{TF,GJ}
     shocks::SH
-    Z::Matrix{TF}
-    G::Matrix{TF}
-    GZ::Matrix{TF}
+    Z::Vector{Vector{TF}}
+    G::Array{TF,3}
+    GZ::Array{TF,3}
     SE::Vector{TF}
     allcovcache::TC
     V::Matrix{TF}
@@ -103,18 +107,13 @@ function _demean!(Y, N::Int, T::Int)
     end
 end
 
-function _fillG!(G::Matrix, gs::GMaps, observables, nT::Int)
-    gj = gs.gj
-    nTfull = gj.nTfull
-    for (j, z) in enumerate(gj.exovars)
+function _fillG!(G::AbstractArray, gs::GMaps, exovars, observables, nT::Int)
+    for (j, z) in enumerate(exovars)
         i0 = 0
+        Gz = selectdim(G, 3, j)
         for (o, _) in observables
-            M = gs[z, o]
-            N = size(M,1) ÷ nTfull
-            for _ in 1:N
-                copyto!(G, i0+1:i0+nT, 1+(j-1)*nT:j*nT, M, 1:nT, 1:nT)
-                i0 += nT
-            end
+            gs(view(Gz, i0+1:i0+nT, :), z, o)
+            i0 += nT
         end
     end
 end
@@ -129,13 +128,13 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     shocks isa ShockProcess && (shocks = (shocks,))
     nsh = length(shocks)
     shockses = ntuple(i->shockse(shocks[i]), nsh)
-    for sh in shocks
-        z = outputs(sh)[1]
+    exovars = [outputs(x)[1] for x in shocks]
+    for z in exovars
         z in gj.exovars || throw(ArgumentError("$z is not an exogenous variable"))
     end
-    nexo = length(gj.exovars)
-    varvals = gj.tjac.varvals
-    nexo == _getvarlength(gj.exovars, varvals) || throw(ArgumentError(
+    nexo = length(exovars)
+    varvals = gj.tjac.varvals[]
+    nexo == _getvarlength(exovars, varvals) || throw(ArgumentError(
         "not all exogenous variables are scalars"))
     nexo == nsh || throw(ArgumentError(
         "shock process is not specified for every exogenous variable"))
@@ -179,6 +178,21 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
             vpriors[i2] = p
         end
     end
+    dZs = gj.tjac.dZs
+    if isempty(strucparas)
+        dZs === nothing || throw(ArgumentError(
+            "TotalJacobian with dZs is not allowed when estimation only involves shock parameters"))
+    else
+        dZs === nothing && throw(ArgumentError(
+            "TotalJacobian requires dZs when estimation involves structural parameters"))
+        for exo in exovars
+            dZ = get(dZs, exo, nothing)
+            dZ === nothing && throw(ArgumentError(
+                "dZs is not specified for $exo in TotalJacobian"))
+            size(dZ, 2) === 1 || throw(ArgumentError(
+                "dZ for $exo contains multiple columns"))
+        end
+    end
     priors = (vpriors...,)
     strucparas = (strucparas...,)
     paras = (shockses..., shockparas..., strucparas...)
@@ -190,10 +204,17 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     nY = length(Y)
     Ycache = similar(Y)
     nT = gj.tjac.nT - nTtrim
-    Z = Matrix{TF}(undef, nT, nsh)
-    G = Matrix{TF}(undef, nT*Nobs, length(Z))
-    _fillG!(G, gs, obs, nT)
-    GZ = Matrix{TF}(undef, size(G, 1), nsh)
+    if isempty(strucparas)
+        p = nothing
+        Z = [Vector{TF}(undef, nT) for _ in 1:nsh]
+        G = Array{TF,3}(undef, nT*Nobs, nT, nsh)
+        _fillG!(G, gs, exovars, obs, nT)
+    else
+        p = plan(gj, strucparas; dZvars=exovars)
+        Z = [reshape(dZs[z], length(dZs[z])) for z in exovars]
+        G = Array{TF,3}(undef, (0,0,0))
+    end
+    GZ = Array{TF,3}(undef, nT, Nobs, nsh)
     SE = Vector{TF}(undef, nsh)
     allcovcache = FFTWAllCovCache(nT, Nobs, nsh, TF; allcovcachekwargs...)
     V = Matrix{TF}(undef, nY, nY)
@@ -204,14 +225,14 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     d2lcache = HessianCache{Vector{TF},Val(:hcentral),Val(true)}(
         similar(dl), similar(dl), similar(dl), similar(dl))
     return BayesianModel(shockses, shockparas, strucparas, priors, lookuppara,
-        obs, lookupobs, Ref(paravals), gj, shocks, Z, G, GZ, SE,
+        exovars, obs, lookupobs, Ref(paravals), p, gs, shocks, Z, G, GZ, SE,
         allcovcache, V, measurement_error, Y, Ycache, nT, Tobs,
         dl, dlcache, d2l, d2lcache, fdkwargs)
 end
 
-nshock(bm::BayesianModel) = typeof(bm).parameters[11]
-nshockpara(bm::BayesianModel) = typeof(bm).parameters[12] + nshock(bm)
-nstrucpara(bm::BayesianModel) = typeof(bm).parameters[13]
+nshock(bm::BayesianModel) = typeof(bm).parameters[5]
+nshockpara(bm::BayesianModel) = typeof(bm).parameters[6] + nshock(bm)
+nstrucpara(bm::BayesianModel) = typeof(bm).parameters[7]
 
 const TransformedBayesianModel{T,L} =
     TransformedLogDensity{T,L} where {T<:AbstractTransform, L<:BayesianModel}
@@ -222,10 +243,10 @@ transform(transformation, bm::BayesianModel) = TransformedLogDensity(transformat
 parent(bm::BayesianModel) = bm
 parent(bm::TransformedBayesianModel) = bm.log_density_function
 
-getindex(bm::BayesOrTrans) = parent(bm).paravals[]
-getindex(bm::BayesOrTrans, i) = getindex(bm[], i)
+@inline getindex(bm::BayesOrTrans) = parent(bm).paravals[]
+@inline getindex(bm::BayesOrTrans, i) = getindex(bm[], i)
 
-function logprior(bm::BayesianModel{NT,PR}, θ) where {NT,PR}
+function logprior(bm::BayesianModel{TF,NT,PR}, θ) where {TF,NT,PR}
     # The generated part avoids allocations for array θ
     # It is unnecessary if θ is tuple
     if @generated
@@ -245,57 +266,86 @@ end
 logprior(bm::TransformedBayesianModel, θ) =
     logprior(parent(bm), transform(bm.transformation, θ))
 
-function _update_paravals!(bm::BayesianModel{NT}, θ::AbstractVector) where NT
-    N = length(NT.parameters[1])
-    vals = NamedTuple{NT.parameters[1]}(ntuple(i->θ[i], N))
-    bm.paravals[] = vals
-    return vals
+# ! To do: Support array parameters?
+function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::AbstractVector) where {TF,NT}
+    if @generated
+        names = NT.parameters[1]
+        N = length(names)
+        ex = :(())
+        for i in 1:N
+            push!(ex.args, :(θ[$i]))
+        end
+        ex = :(vals = NamedTuple{$names}($ex); m.paravals[] = vals)
+        return ex
+    else
+        names = NT.parameters[1]
+        vals = NamedTuple{names}(ntuple(i->θ[i], length(names)))
+        m.paravals[] = vals
+        return vals
+    end
 end
 
-function _update_paravals!(bm::BayesianModel{NT}, θ::Tuple) where NT
+function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::Tuple) where {TF,NT}
     vals = NamedTuple{NT.parameters[1]}(θ)
-    bm.paravals[] = vals
+    m.paravals[] = vals
     return vals
 end
 
-function _update_paravals!(bm::BayesianModel{NT}, θ::NT) where NT
-    bm.paravals[] = θ
+function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::NT) where {TF,NT}
+    m.paravals[] = θ
     return θ
 end
 
-function _fill_shocks!(bm::BayesianModel{NT,PR,SH}) where {NT,PR,SH}
+function _fill_shocks!(bm::BayesianModel{TF,NT,PR,SH}) where {TF,NT,PR,SH}
     if @generated
-        ex = :(impulse!(view(bm.Z,:,1), bm.shocks[1], bm[]))
+        ex = :(impulse!(bm.Z[1], bm.shocks[1], bm[]))
         N = length(SH.parameters)
-        if N > 1
-            for i in 2:N
-                ex = :($ex; impulse!(view(bm.Z,:,$i), bm.shocks[$i], bm[]))
-            end
+        for i in 2:N
+            ex = :($ex; impulse!(bm.Z[$i], bm.shocks[$i], bm[]))
         end
         ex = :($ex; nothing)
         return ex
     else
         for k in 1:nshock(bm)
-            impulse!(view(bm.Z,:,k), bm.shocks[k], bm[])
+            impulse!(bm.Z[k], bm.shocks[k], bm[])
         end
         return nothing
     end
 end
 
+function loglikelihood!(bm::BayesianModel{TF,NT,PR,SH,N1,N2,0}, θ) where {TF,NT,PR,SH,N1,N2}
+    GZ = bm.GZ
+    nsh = nshock(bm)
+    paravals = _update_paravals!(bm, θ)
+    _fill_shocks!(bm)
+    @inbounds for k in 1:nsh
+        GZk = selectdim(GZ,3,k)
+        mul!(_reshape(GZk, length(GZk)), selectdim(bm.G,3,k), bm.Z[k])
+    end
+    for i in 1:nsh
+        @inbounds bm.SE[i] = paravals[i]
+    end
+    r = allcov!(bm.allcovcache, GZ, bm.SE)
+    _fill_allcov!(bm.V, r, bm.merror)
+    return loglikelihood!(bm.V, bm.Y, bm.Ycache)
+end
+
 function loglikelihood!(bm::BayesianModel, θ)
+    tjac = bm.gs.gj.tjac
     nT = bm.nT
     GZ = bm.GZ
     nsh = nshock(bm)
     paravals = _update_paravals!(bm, θ)
     _fill_shocks!(bm)
-    #! TO DO: Allow updating G
-    @inbounds for k in 1:nsh
-        mul!(view(GZ,:,k), view(bm.G,:,1+(k-1)*nT:k*nT), view(bm.Z,:,k))
-    end
+    varvalskeys = typeof(tjac).parameters[2].parameters[1]
+    tjac.varvals[] = varvals = NamedTuple{varvalskeys}(merge(tjac.varvals[], paravals))
+    bm.plan(varvals)
+    bm.gs()
+    _fillG!(_reshape(GZ, size(GZ,1)*size(GZ,2), 1, nsh), bm.gs, bm.exovars, bm.observables, nT)
     for i in 1:nsh
         @inbounds bm.SE[i] = paravals[i]
     end
-    r = allcov!(bm.allcovcache, _reshape(GZ, nT, size(GZ,1)÷nT, nsh), bm.SE)
+    r = allcov!(bm.allcovcache, GZ, bm.SE)
     _fill_allcov!(bm.V, r, bm.merror)
     return loglikelihood!(bm.V, bm.Y, bm.Ycache)
 end
@@ -337,7 +387,7 @@ function logposterior_and_gradient!(bm::BayesOrTrans, θ)
     return logposterior_and_gradient!(bm, θ, grad)
 end
 
-function logposterior_obj!(bm::BayesOrTrans, θ::AbstractVector, grad::AbstractVector)
+function (bm::BayesOrTrans)(θ, grad::AbstractVector)
     if length(grad) > 0
         l, grad = logposterior_and_gradient!(bm, θ, grad)
         return l
@@ -413,14 +463,15 @@ function stderror(bm::BayesOrTrans, θ)
     return map(i->@inbounds(sqrt(Σ[i])), diagind(Σ))
 end
 
-show(io::IO, bm::BayesianModel) = print(io, bm.Tobs, '×', length(bm.observables),
-    " BayesianModel(", nshockpara(bm), ", ", nstrucpara(bm), ')')
+show(io::IO, bm::BayesianModel{TF}) where TF =
+    print(io, bm.Tobs, '×', length(bm.observables), " BayesianModel{", TF, "}(",
+        nshockpara(bm), ", ", nstrucpara(bm), ')')
 
-function show(io::IO, ::MIME"text/plain", bm::BayesianModel)
+function show(io::IO, ::MIME"text/plain", bm::BayesianModel{TF}) where TF
     nsh = nshockpara(bm)
     nstruc = nstrucpara(bm)
     print(io, bm.Tobs, '×', length(bm.observables),
-        " BayesianModel with ", nsh, " shock parameter")
+        " BayesianModel{", TF, "} with ", nsh, " shock parameter")
     nsh > 1 && print(io, 's')
     print(io, " and ", nstruc, " structural parameter")
     nstruc > 1 && print(io, 's')
@@ -445,12 +496,15 @@ end
 
 function show(io::IO, ::MIME"text/plain", bm::TransformedBayesianModel)
     p = parent(bm)
+    TF = typeof(p).parameters[1]
     nsh = nshockpara(p)
     nstruc = nstrucpara(p)
     print(io, p.Tobs, '×', length(p.observables),
         " TransformedBayesianModel of dimension ", dimension(bm),
-        " from parent model with ", nsh, " shock parameter")
+        " from BayesianModel{", TF, "} with ", nsh, " shock parameter")
     nsh > 1 && print(io, 's')
     print(io, " and ", nstruc, " structural parameter")
-    nstruc > 1 && print(io, 's')
+    nstruc > 1 ? println(io, "s:") : println(io, ':')
+    trans = replace(sprint(show, MIME("text/plain"), bm.transformation), '\n'=>"\n  ")
+    print(io, "  ", trans)
 end

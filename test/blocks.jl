@@ -144,11 +144,13 @@ end
 
 @testset "CombinedBlock" begin
     using SequenceJacobians: TwoAsset as ta
-    ins0 = (:pip, :mc, :r, :Y, :κp, :mup, lead(:Y), lead(:pip), lead(:r))
+    ins0 = (:pip, :mc, :r, :Y, :κp, :mup, :εmup, lead(:Y), lead(:pip), lead(:r))
     outs = :pip
     bpricing = block(ta.pricing, ins0, :nkpc)
     mpricing = model(bpricing)
-    sspricing = SteadyState(mpricing, [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939], :pip=>0.1, :nkpc=>0)
+    sspricing = SteadyState(mpricing,
+        [:mc=>0.985, :r=>0.0125, :Y=>1, :κp=>0.1, :mup=>1.015228426395939, :εmup=>0],
+        :pip=>0.1, :nkpc=>0)
     ins = (:mc, :r, :Y, :κp, :mup)
     @test_throws ArgumentError block(sspricing, ins, outs)
     @test_throws ArgumentError block(sspricing, ins0, outs, solver=Roots_Default)
@@ -201,11 +203,11 @@ end
     @test J.Gs[:r][:p].out ≈ Jr atol=1e-6
 
     blabor = block(ta.labor, (:Y, :w, :K, :Z, :α, lag(:K)), (:N, :mc))
-    ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, lag(:K), lead(:K), lead(:N), lead(:Q), lead(:Z), lead(:mc), lead(:r)]
+    ins0 = [:Q, :K, :r, :N, :mc, :Z, :δ, :εI, :α, :εr, lag(:K), lead(:K), lead(:N), lead(:Q), lead(:Z), lead(:mc), lead(:r)]
     binvest = block(ta.investment, ins0, [:inv, :val])
-    calis = [:Y, :w, :Z, :α, :r, :δ, :εI]
+    calis = [:Y, :w, :Z, :α, :r, :δ, :εI, :εr]
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],
-        calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4],
+        calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4, 0],
         [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
     varvals = steadystate!(b, b.ss[])
     @test varvals[:Q] ≈ 1 atol=1e-8

@@ -58,7 +58,7 @@ function simulate!(out::AbstractVecOrMat, gs::GMaps, exovar::Symbol, endovar::Sy
     _simul_shock!(out, dX, ε, nT)
     if addssval
         T = min(length(out), size(ε,1)-nT+1)
-        _addssval!(out, gj.tjac.varvals[endovar], T)
+        _addssval!(out, gj.tjac.varvals[][endovar], T)
     end
     return out
 end
@@ -66,7 +66,7 @@ end
 function simulate(gs::GMaps{T1}, exovar::Symbol, endovar::Symbol,
         ε::AbstractVecOrMat{T2}, shocks; kwargs...) where {T1,T2}
     gj = gs.gj
-    Nout = length(gj.tjac.varvals[endovar])
+    Nout = length(gj.tjac.varvals[][endovar])
     Nin = size(ε, 2)
     T = size(ε,1) - gj.nTfull + 1
     T < 1 && throw(ArgumentError("length of shocks is smaller than $(gj.nTfull)"))

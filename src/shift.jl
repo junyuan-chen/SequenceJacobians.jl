@@ -160,6 +160,8 @@ end
         S2::CompositeShift{T,T}, α::Number, β::Number) where T
     D = S.d
     V = S.v
+    # This ensures all values get multiplied
+    iszero(β) ? fill!(V, zero(T)) : isone(β) ? V : rmul!(V, β)
     for (i1, (id1, m1)) in enumerate(S1.d)
         for (i2, (id2, m2)) in enumerate(S2.d)
             kl = _mulind(id1, m1, id2, m2)
@@ -168,7 +170,7 @@ end
                 push!(D, kl)
                 push!(V, α * sum(v->v[1], S1.v[i1]) * S2.v[i2])
             else
-                V[k] = β * V[k] + α * sum(v->v[1], S1.v[i1]) * S2.v[i2]
+                V[k] += α * sum(v->v[1], S1.v[i1]) * S2.v[i2]
             end
         end
     end
@@ -179,13 +181,15 @@ end
         α::Number, β::Number) where T
     D = S.d
     V = S.v
+    # This ensures all values get multiplied
+    iszero(β) ? fill!(V, zero(T)) : isone(β) ? V : rmul!(V, β)
     for (i1, d) in enumerate(S1.d)
         k = findfirst(x->x==d, D)
         if k === nothing
             push!(D, d)
             push!(V, α * sum(v->v[1], S1.v[i1]) * s)
         else
-            V[k] = β * V[k] + α * sum(v->v[1], S1.v[i1]) * s
+            V[k] += α * sum(v->v[1], S1.v[i1]) * s
         end
     end
     return S
@@ -195,6 +199,8 @@ end
         S2::CompositeShift{T,Matrix{T}}, α::Number, β::Number) where T
     D = S.d
     V = S.v
+    # This ensures all values get multiplied
+    iszero(β) ? fill!(V, zero(T)) : isone(β) ? V : rmul!(V, β)
     M = S1.size[1]
     N = S2.size[2]
     for (i1, (id1, m1)) in enumerate(S1.d)
@@ -224,6 +230,8 @@ end
         α::Number, β::Number) where T
     D = S.d
     V = S.v
+    # This ensures all values get multiplied
+    iszero(β) ? fill!(V, zero(T)) : isone(β) ? V : rmul!(V, β)
     M = S1.size[1]
     N = S2.size[2]
     for (i1, d) in enumerate(S1.d)

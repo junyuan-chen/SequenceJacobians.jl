@@ -19,7 +19,8 @@
         @test JK[:r](3)[:,1] ≈ [0, -0.009911363636363545, 0] atol=1e-8
         @test JK[:C](3)[:,1] ≈ [0, 0.03225, 0] atol=1e-8
 
-        @test J.ntarsrc == [3, 3]
+        @test J.nsrcbytar == [3, 3]
+        @test J.ntarbysrc == [2, 2, 2]
         @test inlength(J) == 3
         @test tarlength(J) == 2
 
@@ -63,14 +64,25 @@
         solve!(GSL_Hybrids, ss, xtol=1e-10)
         J = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
         gj = GEJacobian(J, :Z)
-        G = GMaps(gj)(Matrix{Float64}(undef, 300, 300), :Z, :C)
+        gs = GMaps(gj)
+        G = gs(Matrix{Float64}(undef, 300, 300), :Z, :C)
         # Compare results with original Python package
         # Need to specify twosided=True in the Python package
         @test G[1,1:3] ≈ [2.10710661e-1, 6.58615809e-2, 5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [3.71126268e-2, 4.08907393e-2, 1.44162837e-1] atol=1e-6
 
-        G = GMaps(gj)(G, :Z, :K)
+        G = gs(G, :Z, :K)
         @test G[1,1:3] ≈ [9.23531301e-1, -6.58615809e-2, -5.77240526e-2] atol=1e-6
         @test G[300,298:300] ≈ [7.63355815e-1,  8.39331787e-1,  9.22957992e-1] atol=1e-5
+
+        @test sprint(show, gs[:Z][:w]) == "ShiftMap{Float64}(2)"
+        @test sprint(show, MIME("text/plain"), gs[:Z][:w]) == """
+            ShiftMap{Float64} with 2 components:
+              CompositeShift{Float64, Float64}([(-1, 0), (0, 0)], [0.031149996275251567, 0.0], (1, 1))
+              CompositeShift{Float64, Float64}([(0, 0)], [1.0094753354787827], (1, 1))"""
+        @test sprint(show, gs[:Z][:K]) == "MatrixMap{Float64}(1)"
+        @test sprint(show, MIME("text/plain"), gs[:Z][:K])[1:58] == """
+            MatrixMap{Float64} combined from 1 component:
+              [0.923531 """
     end
 end

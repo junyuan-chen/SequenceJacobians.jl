@@ -3,6 +3,7 @@ using SequenceJacobians
 
 using AdvancedMH
 using Base: has_offset_axes
+using BlockArrays
 using CSV
 using CodecZlib: GzipDecompressorStream
 using DataFrames: DataFrame, nrow
@@ -18,7 +19,7 @@ using NLopt
 using NLsolve
 using Random
 using Roots: Brent, Secant
-using SequenceJacobians: ArrayToArgs
+using SequenceJacobians: ArrayToArgs, _ar1!
 using StructArrays
 using TransformVariables: as, asℝ₊, as𝕀
 

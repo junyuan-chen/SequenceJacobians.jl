@@ -118,7 +118,7 @@ struct CombinedBlockJacobian{BLK<:CombinedBlock, TF, G<:GMaps,
     Gs::G
     iins::Vector{Int}
     plan::P
-    ishiftmap::Vector{Pair{Int,ShiftMap}}
+    ishiftmap::Vector{Pair{Int,ShiftMap{TF}}}
 end
 
 function (j::CombinedBlockJacobian)(varvals::NamedTuple)
@@ -150,7 +150,7 @@ function jacobian(b::CombinedBlock, iins, nT::Int, varvals::NamedTuple, TF::Type
     p = plan(gj, exos)
     No = length(outs)
     Ni = length(iins)
-    ishiftmap = Pair{Int,ShiftMap}[]
+    ishiftmap = Pair{Int,ShiftMap{TF}}[]
     J = Matrix{Matrix{TF}}(undef, No, Ni)
     for n in 1:Ni
         vi = exos[n]

@@ -317,8 +317,8 @@ end
     return zeratio
 end
 
-@implicit function pricing(pip=0.1, mc=0.985, r=0.0125, Y=1, κp=0.1, mup=1.015228426395939)
-    nkpc = κp*(mc-1/mup) + lead(Y)/Y*log(1+lead(pip))/(1+lead(r)) - log(1+pip)
+@implicit function pricing(pip=0.1, mc=0.985, r=0.0125, Y=1, κp=0.1, mup=1.015228426395939, εmup=0.0)
+    nkpc = κp*(mc-1/mup) + lead(Y)/Y*log(1+lead(pip))/(1+lead(r)) + εmup - log(1+pip)
     return pip, nkpc, Roots_Default
 end
 
@@ -333,19 +333,19 @@ end
     return N, mc
 end
 
-@simple function investment(Q, K, r, N, mc, Z, δ, εI, α)
+@simple function investment(Q, K, r, N, mc, Z, δ, εI, α, εr)
     inv = (K / lag(K)-1) / (δ*εI) + 1 - Q
     val = α * lead(Z) * (lead(N)/K)^(1-α) * lead(mc) -
         (lead(K)/K - (1-δ) + (lead(K)/K-1)^2 / (2*δ*εI)) +
-        lead(K)/K*lead(Q) - (1+lead(r))*Q
+        lead(K)/K*lead(Q) - (1+lead(r)+εr)*Q
     return inv, val
 end
 
 function production_blk()
     calis = [:Y=>1, :w=>0.6, :Z=>0.4677898145312322, :α=>0.3299492385786802,
-        :r=>0.0125, :δ=>0.02, :εI=>4]
+        :r=>0.0125, :δ=>0.02, :εI=>4, :εr=>0]
     return block([labor_blk(), investment_blk()],
-        [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],
+        [:Y, :w, :Z, :α, :r, :δ, :εI, :εr], [:Q, :K, :N, :mc],
         calis, [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
 end
 
@@ -357,8 +357,8 @@ end
     return ψp, I, div
 end
 
-@simple function taylor(rstar, pip, φ)
-    i = rstar + φ * pip
+@simple function taylor(rstar, pip, Y, φ, φy)
+    i = rstar + φ * pip + φy * (Y - 1)
     return i
 end
 
@@ -379,8 +379,9 @@ end
     return piw
 end
 
-@simple function union(piw, N, tax, w, UCE, κw, muw, vφ, frisch, β)
-    wnkpc = κw * (vφ * N^(1 + 1/frisch) - (1-tax)*w*N*UCE/muw) + β*log(1+lead(piw)) - log(1+piw)
+@simple function union(piw, N, tax, w, UCE, κw, muw, vφ, frisch, β, εmuw)
+    wnkpc = κw * (vφ * N^(1 + 1/frisch) - (1-tax)*w*N*UCE/muw) + β*log(1+lead(piw)) +
+        εmuw - log(1+piw)
     return wnkpc
 end
 

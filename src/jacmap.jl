@@ -20,15 +20,18 @@ const MatOrBool{TF} = Union{Matrix{TF}, Bool}
 const ShiftOrBool{TF} = Union{CompositeShift{TF}, Bool}
 const SMapOrNo{TF} = Union{ShiftMap{TF}, Nothing}
 
-jacmap(S::Shift{TF}) where TF =
-    ShiftMap(MatOrBool{TF}[true], [ShiftOrBool{TF}[true]], [Shift{TF}[S]],
+# inmat is used in only two scenarios:
+# 1) impulse responses is computed only for specific shock paths specified with dZs
+# 2) MatrixMaps from the same block share the same ins for previous ShiftMaps
+
+jacmap(S::Shift{TF}, inmat=true) where TF =
+    ShiftMap(MatOrBool{TF}[inmat], [ShiftOrBool{TF}[true]], [Shift{TF}[S]],
         CompositeShift{TF}[S * true])
-jacmap(M::AbstractMatrix{TF}) where TF =
-    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[true], MatOrSub{TF}[M], copy(M))
 
-copy(M::MatrixMap) = MatrixMap(copy(M.inmaps), copy(M.ins), copy(M.maps), copy(M.out))
+jacmap(M::AbstractMatrix{TF}, inmat=true) where TF =
+    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[inmat], MatOrSub{TF}[M], M * inmat)
 
-function (*)(S::Shift{TF}, Slast::ShiftMap{TF}) where TF
+function jacmap(S::Shift{TF}, Slast::ShiftMap{TF}, inmat=nothing) where TF
     ins = copy(Slast.ins)
     inshifts = [ShiftOrBool{TF}[s] for s in Slast.outs]
     maps = [Shift{TF}[S] for _ in eachindex(Slast.outs)]
@@ -36,15 +39,15 @@ function (*)(S::Shift{TF}, Slast::ShiftMap{TF}) where TF
     return ShiftMap(ins, inshifts, maps, outs)
 end
 
-(*)(S::Shift{TF}, Mlast::MatrixMap{TF}) where TF =
+jacmap(S::Shift{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF =
     ShiftMap(MatOrBool{TF}[Mlast.out], [ShiftOrBool{TF}[true]], [Shift{TF}[S]],
         CompositeShift{TF}[S * true])
 
 # S is from a source variable
-function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}) where TF
-    k = findfirst(x->x===true, Smap.ins)
+function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, inmat::Union{Matrix{TF},Bool}) where TF
+    k = findfirst(x->x===inmat, Smap.ins)
     if k === nothing
-        push!(Smap.ins, true)
+        push!(Smap.ins, inmat)
         push!(Smap.inshifts, ShiftOrBool{TF}[true])
         push!(Smap.maps, Shift{TF}[S])
         push!(Smap.outs, S * true)
@@ -56,7 +59,7 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}) where TF
     return Smap
 end
 
-function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Slast::ShiftMap{TF}) where TF
+function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Slast::ShiftMap{TF}, inmat=nothing) where TF
     for i in eachindex(Slast.ins)
         k = findfirst(x->x===Slast.ins[i], Smap.ins)
         if k === nothing
@@ -73,7 +76,7 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Slast::ShiftMap{TF}) where TF
     return Smap
 end
 
-function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Mlast::MatrixMap{TF}) where TF
+function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF
     k = findfirst(x->x===Mlast.out, Smap.ins)
     if k === nothing
         push!(Smap.ins, Mlast.out)
@@ -91,18 +94,26 @@ end
 function mul!(C::AbstractVecOrMat, S::ShiftMap, s::Number, β::Number=false)
     iszero(β) ? fill!(C, zero(eltype(C))) : isone(β) ? C : rmul!(C, β)
     for i in eachindex(S.outs)
-        mul!(C, S.outs[i], S.ins[i], s, true)
+        ini = S.ins[i]
+        if ini isa Bool
+            mul!(C, S.outs[i], ini, s, true)
+        else
+            # C is allowed to be smaller than S
+            #! To do: What if the ins are BlockArrays?
+            mul!(C, S.outs[i], view(ini, 1:size(C,1), 1:size(C,2)), s, true)
+        end
     end
     return C
 end
 
 # All matrix ins in ShiftMap should have the same shape
-function (S::ShiftMap{TF})(N::Int) where TF
+function (S::ShiftMap{TF})(nT::Int) where TF
     k = findfirst(x->x!==true, S.ins)
     if k === nothing
-        return mul!(zeros(TF, N, N), S, true, true)
-    else # Ignore N
-        return mul!(similar(S.ins[k]), S, true, false)
+        return mul!(zeros(TF, nT.*(S.outs[1].size)), S, true, true)
+    else # Ignore M, N
+        out = similar(S.ins[k], (nT*S.outs[1].size[1], size(S.ins[k],2)))
+        return mul!(out, S, true, false)
     end
 end
 
@@ -116,32 +127,30 @@ function _updateout!(Smap::ShiftMap)
     return Smap
 end
 
-function (*)(M::AbstractMatrix{TF}, Slast::ShiftMap{TF}) where TF
-    m = Slast(size(M, 2))
-    return MatrixMap(SMapOrNo{TF}[Slast], MatOrBool{TF}[m], MatOrSub{TF}[M], M*m)
-end
+jacmap(M::AbstractMatrix{TF}, Slast::ShiftMap{TF}, inmat) where TF =
+    MatrixMap(SMapOrNo{TF}[Slast], MatOrBool{TF}[inmat], MatOrSub{TF}[M], M*inmat)
 
-(*)(M::AbstractMatrix{TF}, Mlast::MatrixMap{TF}) where TF =
+jacmap(M::AbstractMatrix{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF =
     MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[Mlast.out], MatOrSub{TF}[M], M*Mlast.out)
 
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}) where TF
+# M is from a source variable
+function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, inmat::Union{Matrix{TF},Bool}) where TF
     push!(Mmap.inmaps, nothing)
-    push!(Mmap.ins, true)
+    push!(Mmap.ins, inmat)
     push!(Mmap.maps, M)
-    mul!(Mmap.out, M, true, true, true)
+    mul!(Mmap.out, M, inmat, true, true)
     return Mmap
 end
 
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Slast::ShiftMap{TF}) where TF
+function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Slast::ShiftMap{TF}, inmat) where TF
     push!(Mmap.inmaps, Slast)
-    m = Slast(size(M, 2))
-    push!(Mmap.ins, m)
+    push!(Mmap.ins, inmat)
     push!(Mmap.maps, M)
-    mul!(Mmap.out, M, m, true, true)
+    mul!(Mmap.out, M, inmat, true, true)
     return Mmap
 end
 
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Mlast::MatrixMap{TF}) where TF
+function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF
     push!(Mmap.inmaps, nothing)
     push!(Mmap.ins, Mlast.out)
     push!(Mmap.maps, M)
@@ -167,5 +176,29 @@ function _updateins!(Mmap::MatrixMap, iins::Union{Vector{Int},Nothing}=nothing)
     return nothing
 end
 
+# C is allowed to be smaller than M
+#! To do: What if out is for a BlockArray?
 mul!(C::AbstractVecOrMat, M::MatrixMap, s::Number, β::Number=false) =
-    mul!(C, M.out, s, true, β)
+    mul!(C, view(M.out, 1:size(C,1), 1:size(C,2)) , s, true, β)
+
+show(io::IO, S::ShiftMap{TF}) where TF =
+    print(io, "ShiftMap{", TF, "}(", length(S.outs), ')')
+
+function show(io::IO, ::MIME"text/plain", S::ShiftMap{TF}) where TF
+    N = length(S.outs)
+    print(io, "ShiftMap{", TF, "} with ", N, " component")
+    print(io, N > 1 ? "s:" : ":")
+    for out in S.outs
+        print(io, "\n  ", out)
+    end
+end
+
+show(io::IO, M::MatrixMap{TF}) where TF =
+    print(io, "MatrixMap{", TF, "}(", length(M.maps), ')')
+
+function show(io::IO, ::MIME"text/plain", M::MatrixMap{TF}) where TF
+    N = length(M.maps)
+    print(io, "MatrixMap{", TF, "} combined from ", N, " component")
+    println(io, N > 1 ? "s:" : ":")
+    print(IOContext(io, :compact=>true), "  ", M.out)
+end
