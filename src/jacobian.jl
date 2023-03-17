@@ -1,4 +1,4 @@
-const DMap{TF} = Dict{Symbol, AbstractJacobianMap{TF}} where TF
+const DMap{TF} = Dict{Symbol, AbstractJacobianMap{TF}}
 
 struct TotalJacobian{TF<:AbstractFloat, NT<:NamedTuple}
     parent::SequenceSpaceModel
@@ -16,7 +16,7 @@ struct TotalJacobian{TF<:AbstractFloat, NT<:NamedTuple}
     excluded::Union{Set{BlockOrVar}, Nothing}
     blkjacs::Vector{AbstractBlockJacobian}
     dZs::Union{Dict{Symbol, Matrix{TF}}, Nothing}
-    parts::Dict{Symbol, Dict{Symbol,VarJacobian{TF}}}
+    parts::Dict{Symbol, Dict{Symbol,Any}}
     totals::Dict{Symbol, Dict{Symbol,AbstractJacobianMap{TF}}}
 end
 
@@ -45,7 +45,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets, varvals::NamedTu
     excluded === nothing || (excluded = Set{BlockOrVar}(excluded))
     lookupblk = Dict{AbstractBlock, Int}()
     blkjacs = AbstractBlockJacobian[]
-    DVar = Dict{Symbol, VarJacobian{TF}}
+    DVar = Dict{Symbol, Any} # Do not restrict element type here
     parts = Dict{Symbol, DVar}()
     totals = Dict{Symbol, DMap{TF}}(u=>DMap{TF}() for u in sources)
     for v in m.order
@@ -426,11 +426,8 @@ struct GMaps{TF, GJ<:GEJacobian{TF}} <: AbstractDict{Symbol, DMap{TF}}
     smaps::Vector{ShiftMap{TF}}
     mmaps::Vector{Vector{MatrixMap{TF}}}
     Gs::Dict{Symbol, Dict{Symbol, AbstractJacobianMap{TF}}}
+    inds::Dict{Symbol, Dict{Symbol, Tuple{Int,Int}}}
 end
-
-iterate(gs::GMaps) = iterate(gs.Gs)
-iterate(gs::GMaps, state) = iterate(gs.Gs, state)
-length(gs::GMaps) = length(gs.Gs)
 
 function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
     tjac = gj.tjac
@@ -460,12 +457,15 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
         iblks = 1:length(tjac.blkjacs)
     end
     Gs = Dict{Symbol, DMap{TF}}()
+    inds = Dict{Symbol, Dict{Symbol, Tuple{Int,Int}}}()
     G_Umaps = MatrixMap{TF}[]
     for (j, z) in enumerate(gj.exovars)
         Gs[z] = Gz = DMap{TF}()
+        inds[z] = idz = Dict{Symbol, Tuple{Int,Int}}()
         for (i, u) in enumerate(gj.endosrcs)
             Gz[u] = jm = jacmap(view(gj.G_U, Block(i, j)))
             push!(G_Umaps, jm)
+            idz[u] = (0, length(G_Umaps))
         end
     end
     smaps = ShiftMap{TF}[]
@@ -476,7 +476,8 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
         for vi in unique(inputs(blk))
             exo = get(Gs, vi, nothing)
             if exo === nothing
-                for d in values(Gs)
+                for (z, d) in Gs
+                    idz = inds[z]
                     maplast = get(d, vi, nothing)
                     if maplast !== nothing
                         # Need to collect mmaps with different ins separately
@@ -491,7 +492,13 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
                             map0 = get(d, vo, nothing)
                             if map0 === nothing
                                 d[vo] = jm = jacmap(js[vi], maplast, inmat)
-                                push!(blkmmaps === nothing ? smaps : blkmmaps, jm)
+                                if blkmmaps === nothing
+                                    push!(smaps, jm)
+                                    idz[vo] = (1, length(smaps))
+                                else
+                                    push!(blkmmaps, jm)
+                                    idz[vo] = (1+length(mmaps), length(blkmmaps))
+                                end
                             else
                                 muladd!(map0, js[vi], maplast, inmat)
                             end
@@ -500,6 +507,7 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
                 end
             else # vi is an exogenous variable
                 dZ = tjac.dZs === nothing ? true : get(tjac.dZs, vi, true)
+                idz = inds[vi]
                 blk isa SimpleBlock ? (blkmmaps = nothing) :
                     (blkmmaps = MatrixMap{TF}[]; push!(mmaps, blkmmaps))
                 for vo in outputs(blk)
@@ -509,22 +517,38 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
                     map0 = get(exo, vo, nothing)
                     if map0 === nothing
                         exo[vo] = jm = jacmap(js[vi], dZ)
-                        push!(blkmmaps === nothing ? smaps : blkmmaps, jm)
+                        if blkmmaps === nothing
+                            push!(smaps, jm)
+                            idz[vo] = (1, length(smaps))
+                        else
+                            push!(blkmmaps, jm)
+                            idz[vo] = (1+length(mmaps), length(blkmmaps))
+                        end
                     else
                         muladd!(map0, js[vi], dZ)
                     end
                 end
             end
         end
-    end    
-    return GMaps(gj, G_Umaps, smaps, mmaps, Gs)
+    end
+    return GMaps(gj, G_Umaps, smaps, mmaps, Gs, inds)
 end
 
-@inline getindex(g::GMaps, exo::Symbol) = g.Gs[exo]
+@inline getindex(g::GMaps{TF}, exo::Symbol) where TF = g.Gs[exo]
+
+iterate(g::GMaps) = iterate(g.Gs)
+iterate(g::GMaps, state) = iterate(g.Gs, state)
+length(g::GMaps) = length(g.Gs)
 
 @inline function getindex(g::GMaps, exo::Symbol, endo::Symbol)
-    G = g.Gs[exo][endo]
-    return G isa ShiftMap ? G(g.gj.nTfull) : copy(G.out)
+    i, j = g.inds[exo][endo]
+    if i === 0
+        return g.G_Umaps[j]
+    elseif i === 1
+        return g.smaps[j]
+    else
+        return g.mmaps[i-1][j]
+    end
 end
 
 @inline function (g::GMaps)()
@@ -544,8 +568,23 @@ end
     return g
 end
 
-(g::GMaps)(out::AbstractVecOrMat, exo::Symbol, endo::Symbol) =
-    mul!(out, g.Gs[exo][endo], true)
+@inline (g::GMaps)(out::AbstractVecOrMat, exo::Symbol, endo::Symbol) =
+    mul!(out, g[exo, endo], true)
+
+@inline function (g::GMaps)(exo::Symbol, endo::Symbol)
+    nT = g.gj.nTfull
+    i, j = g.inds[exo][endo]
+    if i === 0
+        M = copy(g.G_Umaps[j].out)
+        return size(M) === (nT, nT) ? M : _block2(M, nT)
+    elseif i === 1
+        M = g.smaps[j](nT)
+        return size(M) === (nT, nT) ? M : _block2(M, nT)
+    else
+        M = copy(g.mmaps[i-1][j].out)
+        return size(M) === (nT, nT) ? M : _block2(M, nT)
+    end
+end
 
 show(io::IO, gs::GMaps{TF}) where TF =
     (print(io, "GMaps{$TF}("); join(io, gs.gj.exovars, ", "); print(io, ')'))

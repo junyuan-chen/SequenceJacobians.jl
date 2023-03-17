@@ -1,10 +1,8 @@
-const VarJacobian{TF} = Union{Shift{TF}, AbstractMatrix{TF}}
-
 abstract type AbstractJacobianMap{TF} end
 
 struct ShiftMap{TF} <: AbstractJacobianMap{TF}
     ins::Vector{Union{Matrix{TF}, Bool}}
-    inshifts::Vector{Vector{Union{CompositeShift{TF}, Bool}}}
+    inshifts::Vector{Vector{Union{CompositeShift, Bool}}}
     maps::Vector{Vector{Shift{TF}}}
     outs::Vector{CompositeShift{TF}}
 end
@@ -17,7 +15,8 @@ struct MatrixMap{TF} <: AbstractJacobianMap{TF}
 end
 
 const MatOrBool{TF} = Union{Matrix{TF}, Bool}
-const ShiftOrBool{TF} = Union{CompositeShift{TF}, Bool}
+# Incomplete parameters for CompositeShift would cause StackOverflowError on Julia v1.6
+const ShiftOrBool = Union{CompositeShift, Bool}
 const SMapOrNo{TF} = Union{ShiftMap{TF}, Nothing}
 
 # inmat is used in only two scenarios:
@@ -25,7 +24,7 @@ const SMapOrNo{TF} = Union{ShiftMap{TF}, Nothing}
 # 2) MatrixMaps from the same block share the same ins for previous ShiftMaps
 
 jacmap(S::Shift{TF}, inmat=true) where TF =
-    ShiftMap(MatOrBool{TF}[inmat], [ShiftOrBool{TF}[true]], [Shift{TF}[S]],
+    ShiftMap(MatOrBool{TF}[inmat], [ShiftOrBool[true]], [Shift{TF}[S]],
         CompositeShift{TF}[S * true])
 
 jacmap(M::AbstractMatrix{TF}, inmat=true) where TF =
@@ -33,14 +32,14 @@ jacmap(M::AbstractMatrix{TF}, inmat=true) where TF =
 
 function jacmap(S::Shift{TF}, Slast::ShiftMap{TF}, inmat=nothing) where TF
     ins = copy(Slast.ins)
-    inshifts = [ShiftOrBool{TF}[s] for s in Slast.outs]
+    inshifts = [ShiftOrBool[s] for s in Slast.outs]
     maps = [Shift{TF}[S] for _ in eachindex(Slast.outs)]
     outs = CompositeShift{TF}[S * s for s in Slast.outs]
     return ShiftMap(ins, inshifts, maps, outs)
 end
 
 jacmap(S::Shift{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF =
-    ShiftMap(MatOrBool{TF}[Mlast.out], [ShiftOrBool{TF}[true]], [Shift{TF}[S]],
+    ShiftMap(MatOrBool{TF}[Mlast.out], [ShiftOrBool[true]], [Shift{TF}[S]],
         CompositeShift{TF}[S * true])
 
 # S is from a source variable
@@ -48,7 +47,7 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, inmat::Union{Matrix{TF},Bool}
     k = findfirst(x->x===inmat, Smap.ins)
     if k === nothing
         push!(Smap.ins, inmat)
-        push!(Smap.inshifts, ShiftOrBool{TF}[true])
+        push!(Smap.inshifts, ShiftOrBool[true])
         push!(Smap.maps, Shift{TF}[S])
         push!(Smap.outs, S * true)
     else
@@ -64,7 +63,7 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Slast::ShiftMap{TF}, inmat=no
         k = findfirst(x->x===Slast.ins[i], Smap.ins)
         if k === nothing
             push!(Smap.ins, Slast.ins[i])
-            push!(Smap.inshifts, ShiftOrBool{TF}[Slast.outs[i]])
+            push!(Smap.inshifts, ShiftOrBool[Slast.outs[i]])
             push!(Smap.maps, Shift{TF}[S])
             push!(Smap.outs, S * Slast.outs[i])
         else
@@ -80,7 +79,7 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Mlast::MatrixMap{TF}, inmat=n
     k = findfirst(x->x===Mlast.out, Smap.ins)
     if k === nothing
         push!(Smap.ins, Mlast.out)
-        push!(Smap.inshifts, ShiftOrBool{TF}[true])
+        push!(Smap.inshifts, ShiftOrBool[true])
         push!(Smap.maps, Shift{TF}[S])
         push!(Smap.outs, S * true)
     else
@@ -98,9 +97,21 @@ function mul!(C::AbstractVecOrMat, S::ShiftMap, s::Number, β::Number=false)
         if ini isa Bool
             mul!(C, S.outs[i], ini, s, true)
         else
-            # C is allowed to be smaller than S
-            #! To do: What if the ins are BlockArrays?
-            mul!(C, S.outs[i], view(ini, 1:size(C,1), 1:size(C,2)), s, true)
+            # C is allowed to be smaller than S in the time dimension
+            # This is useful for trimming the values at the end
+            if S.outs[1].size == (1, 1)
+                mul!(C, S.outs[i], view(ini, 1:size(C,1), 1:size(C,2)), s, true)
+            else
+                nT = Int(size(C,1)/S.outs[1].size[1])
+                if nT * size(C,2) < size(ini, 1) # ! Does it work?
+                    inib = _block1(ini, Int(size(ini,1)/S.outs[1].size[2]))
+                    rb = blocksize(inib,1)
+                    blks = [view(view(inib, ib, :), 1:nT, 1:size(C,2)) for ib in 1:rb]
+                    mul!(C, S.outs[i], mortar(_reshape(blks, rb, 1)), s, true)
+                else
+                    mul!(C, S.outs[i], ini, s, true)
+                end
+            end
         end
     end
     return C
@@ -110,8 +121,8 @@ end
 function (S::ShiftMap{TF})(nT::Int) where TF
     k = findfirst(x->x!==true, S.ins)
     if k === nothing
-        return mul!(zeros(TF, nT.*(S.outs[1].size)), S, true, true)
-    else # Ignore M, N
+        return mul!(zeros(TF, nT.*S.outs[1].size), S, true, true)
+    else
         out = similar(S.ins[k], (nT*S.outs[1].size[1], size(S.ins[k],2)))
         return mul!(out, S, true, false)
     end

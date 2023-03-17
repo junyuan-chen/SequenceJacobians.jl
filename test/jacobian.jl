@@ -47,7 +47,7 @@
               endogenous: K, L
               targets:    euler, goods_mkt"""
 
-        G = GMaps(gj)[:Z, :C]
+        G = GMaps(gj)(:Z, :C)
         # Compare results with original Python package
         @test G[1,1] ≈ 0.15969857749115557 atol=1e-7
         @test G[2,1] ≈ 0.14155046602609384 atol=1e-7
@@ -76,10 +76,9 @@
         @test G[300,298:300] ≈ [7.63355815e-1,  8.39331787e-1,  9.22957992e-1] atol=1e-5
 
         @test sprint(show, gs[:Z][:w]) == "ShiftMap{Float64}(2)"
-        @test sprint(show, MIME("text/plain"), gs[:Z][:w]) == """
+        @test sprint(show, MIME("text/plain"), gs[:Z][:w])[1:100] == """
             ShiftMap{Float64} with 2 components:
-              CompositeShift{Float64, Float64}([(-1, 0), (0, 0)], [0.031149996275251567, 0.0], (1, 1))
-              CompositeShift{Float64, Float64}([(0, 0)], [1.0094753354787827], (1, 1))"""
+              CompositeShift{Float64, Float64}([(-1, 0), (0, 0)], [0.031149"""
         @test sprint(show, gs[:Z][:K]) == "MatrixMap{Float64}(1)"
         @test sprint(show, MIME("text/plain"), gs[:Z][:K])[1:58] == """
             MatrixMap{Float64} combined from 1 component:

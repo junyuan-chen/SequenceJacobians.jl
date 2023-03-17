@@ -161,6 +161,38 @@ _reshape(A::AbstractArray, dims::Int...) = ReshapedArray(A, dims, ())
 
 _getvarlength(vars, vals::NamedTuple) = sum(v->length(vals[v]), vars)
 
+@inline _block1(A::AbstractMatrix, nT::Int) =
+    PseudoBlockMatrix(A, (_BlockedUnitRange(1, nT:nT:size(A,1)), Base.OneTo(size(A,2))))
+
+@inline _block2(A::AbstractMatrix, nT::Int) =
+    PseudoBlockMatrix(A, (_BlockedUnitRange(1, nT:nT:size(A,1)),
+        _BlockedUnitRange(1, nT:nT:size(A,2))))
+
+function _transform!(d::Dict, trans::Vector{Symbol}, varvals::NamedTuple)
+    for irfs in values(d)
+        for v in trans
+            irf = get(irfs, v, nothing)
+            if irf !== nothing
+                ss = varvals[v]
+                ss isa AbstractArray && (ss = _reshape(ss,1,length(ss)))
+                irf .= 100.0.*irf./ss
+            end
+        end
+    end
+end
+
+function _transform!(d::Dict, trans::Bool, varvals::NamedTuple)
+    if trans
+        for irfs in values(d)
+            for (v, irf) in irfs
+                ss = varvals[v]
+                ss isa AbstractArray && (ss = _reshape(ss,1,length(ss)))
+                irf .= 100.0.*irf./ss
+            end
+        end
+    end
+end
+
 function acceptance_rate(sample::AbstractVector)
     i1 = firstindex(sample)
     iN = lastindex(sample)

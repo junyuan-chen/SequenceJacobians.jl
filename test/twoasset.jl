@@ -293,7 +293,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         end
         # Verify that how dZs is initially specified doesn't affect results
         dZ = zeros(300)
-        _ar1!(dZ, 0.6)
+        ar1impulse!(dZ, 0.6)
         J3 = TotalJacobian(m, vcat(exos, endosrcs), tars, tassvals, 300,
             dZs=[n=>copy(dZ) for n in exos])
         gj3 = GEJacobian(J3, exos)

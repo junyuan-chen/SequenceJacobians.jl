@@ -3,7 +3,8 @@ module SequenceJacobians
 using AutoregressiveModels: ARMAProcess
 using Base: RefValue, ReshapedArray
 using BlockArrays: BlockMatrix, PseudoBlockMatrix, PseudoBlockVector, Block,
-    BlockedUnitRange, mortar, blocksize, blocksizes, MemoryLayout, _copyto!
+    BlockedUnitRange, mortar, blocksize, blocksizes, _BlockedUnitRange,
+    MemoryLayout, _copyto!
 using Distributions: Distribution, logpdf
 using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
 using FastLapackInterface: LUWs
@@ -57,7 +58,6 @@ export supconverged,
        Shift,
        CompositeShift,
 
-       VarJacobian,
        AbstractJacobianMap,
        ShiftMap,
        MatrixMap,
@@ -175,12 +175,6 @@ export supconverged,
        @simple,
        @implicit,
 
-       Transition,
-
-       linirf,
-       nlirf,
-       astable,
-
        AbstractAllCovCache,
        FFTWAllCovCache,
        allcov!,
@@ -195,6 +189,8 @@ export supconverged,
        shockse,
        ar1shock,
        arma11shock,
+       aswidetable,
+       aslongtable,
 
        BayesianModel,
        TransformedBayesianModel,
@@ -223,8 +219,6 @@ include("model.jl")
 include("jacobian.jl")
 include("combinedblock.jl")
 include("macros.jl")
-include("transition.jl")
-include("irf.jl")
 include("allcov.jl")
 include("shock.jl")
 include("bayesian.jl")

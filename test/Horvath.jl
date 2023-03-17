@@ -1,13 +1,6 @@
-const vlw = loadjson("vlw")
-
-function getsecirf(p, vals, gj, z, u, i, j, T)
-    A = 0.01 .* p.ρA[i].^(0:T-1)
-    irf = fill(vals[u][j], T)
-    return mul!(irf, gj.Gs[z][u][j,i], A, true, true)
-end
-
 @testset "Horvath" begin
     using SequenceJacobians: Horvath as hv
+    vlw = loadjson("vlw")
     p = hv.HorvathPlanner(vlw)
     N = length(p.C)
     T = 60
@@ -32,17 +25,20 @@ end
         vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
+        gs = GMaps(gj, gj.endosrcs)
+        irf = impulse(gs, :A=>0.01 .* p.ρA'.^(0:T-1), (:K, :μ))
 
-        irf = getsecirf(p, vals, gj, :A, :K, 2, 2, T)
-        @test irf[1:4] ≈ [8.37086769055079e-5, 8.37153354856315e-5, 8.37218320155476e-5,
+        irfAK = irf[:A][:K][:,2,2] .+ vals[:K][2]
+        @test irfAK[1:4] ≈ [8.37086769055079e-5, 8.37153354856315e-5, 8.37218320155476e-5,
             8.37233714224442e-5] atol=1e-9
-        irf = getsecirf(p, vals, gj, :A, :K, 30, 20, T)
-        @test irf[1:4] ≈ [1.21087421904459e-5, 1.21136555611731e-5, 1.21147035034710e-5,
+        irfAK = irf[:A][:K][:,20,30] .+ vals[:K][20]
+        @test irfAK[1:4] ≈ [1.21087421904459e-5, 1.21136555611731e-5, 1.21147035034710e-5,
             1.21145389348198e-5] atol=1e-10
-        irf = getsecirf(p, vals, gj, :A, :μ, 1, 1, T)
-        @test irf[5:8] ≈ [1271.35797617984, 1272.05717332078, 1272.87106381285, 1273.73236354833] atol=1e-1
-        irf = getsecirf(p, vals, gj, :A, :μ, 15, 10, T)
-        @test irf[1:4] ≈ [926.915440844600, 926.911409549962, 926.906755224990,
+        irfAμ = irf[:A][:μ][:,1,1] .+ vals[:μ][1]
+        @test irfAμ[5:8] ≈ [1271.35797617984, 1272.05717332078, 1272.87106381285,
+            1273.73236354833] atol=1e-1
+        irfAμ = irf[:A][:μ][:,10,15] .+ vals[:μ][10]
+        @test irfAμ[1:4] ≈ [926.915440844600, 926.911409549962, 926.906755224990,
             926.910364350904] atol=1e-3
     end
 
@@ -67,61 +63,64 @@ end
         vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
+        gs = GMaps(gj)
+        A = 0.01 .* p.ρA'.^(0:T-1)
+        @time irf = impulse(gs, :A=>A)
 
-        irf = getsecirf(p, vals, gj, :A, :μ, 1, 1, T)
-        @test irf[5:8] ≈ [1193.32690087411, 1193.94423057912, 1194.64872211859,
+        irfΑμ = irf[:A][:μ][:,1,1] .+ vals[:μ][1]
+        @test irfΑμ[5:8] ≈ [1193.32690087411, 1193.94423057912, 1194.64872211859,
             1195.39208371279] atol=1e-1
-        irf = getsecirf(p, vals, gj, :A, :μ, 15, 10, T)
-        @test irf[1:4] ≈ [870.205098428633, 870.196228865397, 870.195230527473,
+        irfΑμ = irf[:A][:μ][:,10,15] .+ vals[:μ][10]
+        @test irfΑμ[1:4] ≈ [870.205098428633, 870.196228865397, 870.195230527473,
             870.197126094683] atol=1e-3
-        irf = getsecirf(p, vals, gj, :A, :K, 2, 2, T)
-        @test irf[1:4] ≈ [9.86631447086790e-5, 9.86676471509673e-5, 9.86707281854642e-5,
+        irfAK = irf[:A][:K][:,2,2] .+ vals[:K][2]
+        @test irfAK[1:4] ≈ [9.86631447086790e-5, 9.86676471509673e-5, 9.86707281854642e-5,
             9.86725041700443e-5] atol=1e-9
-        irf = getsecirf(p, vals, gj, :A, :K, 30, 20, T)
-        @test irf[1:4] ≈ [1.50685925523843e-5, 1.50698233156049e-5, 1.50706351640268e-5,
+        irfAK = irf[:A][:K][:,20,30] .+ vals[:K][20]
+        @test irfAK[1:4] ≈ [1.50685925523843e-5, 1.50698233156049e-5, 1.50706351640268e-5,
             1.50710416824670e-5] atol=1e-10
 
-        A = 0.01 .* p.ρA'.^(0:T-1)
-        @time irf = linirf(gj, :A=>A)
-        irfL = irf[:A][:L] .+ vals[:L]'
-        @test haskey(gj.Ms[:A], :L)
-
+        irfL = sum(irf[:A][:L], dims=3) .+ vals[:L]'
         @test irfL[11:14,1] ≈ [0.0147524215916864, 0.0147483879991443, 0.0147469008443326,
             0.0147472869978414] atol=1e-6
         @test irfL[5:8,8] ≈ [0.0227951676237182, 0.0226526489315170, 0.0225581427283472,
             0.0224985611496701] atol=1e-6
 
-        irfLtot = irf[:A][:Ltot] .+ vals[:Ltot]
+        irfLtot = sum(irf[:A][:Ltot], dims=3) .+ vals[:Ltot]
         @test irfLtot[1:10] ≈ [0.804494965807056, 0.798088178218045, 0.793100997885200,
             0.789247588847981, 0.786310398275455, 0.784111645310415, 0.782503353260691,
             0.781362343396361, 0.780586698192282, 0.780092794081647] atol=1e-3
         @test sum(irf[:A][:L], dims=2) ≈ irf[:A][:Ltot] atol=1e-7
 
-        irfCtot = irf[:A][:Ctot] .+ vals[:Ctot]
+        irfCtot = sum(irf[:A][:Ctot], dims=3) .+ vals[:Ctot]
         @test irfCtot[1:4] ≈ [0.000110624106620004, 0.000110483994704759,
             0.000110458811679267, 0.000110457457876636] atol=1e-7
 
-        irfY = irf[:A][:Y] .+ vals[:Y]'
+        irfY = sum(irf[:A][:Y], dims=3) .+ vals[:Y]'
         @test irfY[1:4,1] ≈ [5.35005037767409e-5, 5.32817262601225e-5,
             5.30932723698108e-5, 5.29287581415065e-5] atol=1e-7
         @test irfY[1:4,8] ≈ [9.56987436091410e-5, 9.36016594496518e-5,
             9.21166171061876e-5, 9.10338230540050e-5] atol=1e-6
 
-        irf = linirf(gj, :A=>A, :VA, transform=true)
-        irfVA = irf[:A][:VA]
+        irf2 = impulse(gs, :A=>A, :VA, transform=true)
+        irfVA = sum(irf2[:A][:VA], dims=3)
         @test irfVA[1:4,3] ≈ [11.8984806246017, 10.3439538558011, 8.30598923382437,
             6.29891065021744] atol=1
         @test irfVA[15:18,25] ≈ [-0.00352893117446795, -0.0165687244357060,
             -0.0250684500164411, -0.0302002285083591] atol=1e-3
 
+        df = DataFrame(aslongtable(irf))
+        @test nrow(df) == 825840
+        @test df[(df.exovar.==:A37).&(df.endovar.==:K1),:value] == irf[:A][:K][:,1,37]
+
         εA = vcat(zeros(T-1,37), reshape(vlw[:εA],70,37))
         shocks = map(x->ARMAProcess(x, ()), p.ρA)
-        s = simulate(gj, :A, :Ltot, εA, shocks)
+        s = simulate(gs, :A, :Ltot, εA, shocks)
         @test size(s) == (70, 1)
         @test s[1:4] ≈ [0.778555753205377, 0.805221510238579, 0.789908637509037,
             0.761696915244395] atol=1e-3
 
-        s = simulate(gj, :A, :L, εA, shocks)
+        s = simulate(gs, :A, :L, εA, shocks)
         @test size(s) == (70, 37)
         @test s[1:4,1] ≈ [0.0138751865364403, 0.0148416066788429,
             0.0147788643609457, 0.0140718615393009] atol=1e-4

@@ -95,6 +95,7 @@ function (aa::ArrayToArgs{W})(A::AbstractArray) where W
         ex = :()
         for w in W
             i0 < w || error("invalid cumwidths $W")
+            # Singleton array input is treated as scalar, which should be fine
             push!(ex.args, i0+1 < w ? :(view(A, $(i0+1):$w)) : :(A[$(i0+1)]))
             i0 = w
         end
@@ -111,12 +112,15 @@ function (aa::ArrayToArgs{W})(A::AbstractArray) where W
     end
 end
 
-struct PartialF{F<:Function, TF<:Real, I}
+struct PartialF{F<:Function, TF<:Real, CA, I}
     f::F
     inds::Vector{Int}
     vals::Vector{TF}
+    cache::CA
     toargs::ArrayToArgs{I}
 end
+
+_hascache(::PartialF{F,TF,CA}) where {F,TF,CA} = CA !== Nothing
 
 function (g::PartialF)(fx::AbstractVector, xs)
     length(xs) == length(g.inds) || throw(ArgumentError(
@@ -125,7 +129,7 @@ function (g::PartialF)(fx::AbstractVector, xs)
     for (i, x) in zip(g.inds, xs)
         vals[i] = x
     end
-    r = g.f(g.toargs(vals)...)
+    r = _hascache(g) ? g.f(g.cache, g.toargs(vals)...) : g.f(g.toargs(vals)...)
     copyto!(fx, Iterators.flatten(r))
     return fx
 end
@@ -144,14 +148,15 @@ end
 
 function (j::SimpleBlockJacobian)(varvals::NamedTuple)
     invals = map(k->getfield(varvals, k), inputs(j.blk))
-    copyto!(j.g.vals, Iterators.flatten(invals))
+    copyto!(j.g.vals, Iterators.flatten(_hascache(j.g) ? invals[2:end] : invals))
+    # A cache should not be reached from any source variable
     copyto!(j.x, Iterators.flatten((invals[i] for i in j.iins)))
     finite_difference_jacobian!(j.J.blocks, j.g, j.x, j.fdcache)
     return j
 end
 
-function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, outwidths, nT::Int,
-        TF::Type)
+function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, cache, outwidths,
+        nT::Int, TF::Type)
     widths = map(length, invals)
     cumwidths = cumsum(widths)
     toargs = ArrayToArgs(cumwidths)
@@ -159,58 +164,43 @@ function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, outwidths, nT:
     vals = Vector{TF}(undef, ni)
     cuts = (0, cumwidths...)
     iins = collect(iins)
-    inds = Vector{Int}(undef, sum(i->widths[i], iins))
+    wiins = cache === nothing ? iins : iins .- 1 # Handle the offset due to skipping cache
+    # Collect indices for each individual input value assuming array inputs have fixed length
+    inds = Vector{Int}(undef, sum(i->widths[i], wiins))
     i = 1
-    for j in iins
+    for j in wiins
         for k in cuts[j]+1:cuts[j+1]
             inds[i] = k
             i += 1
         end
     end
-    g = PartialF(b.f, inds, vals, toargs)
+    g = PartialF(b.f, inds, vals, cache, toargs)
     # Array variables should have existed in varvals
     nii = length(inds)
     no = sum(outwidths)
     J = Matrix{TF}(undef, no, nii)
     fdcache = JacobianCache(Vector{TF}(undef, nii), Vector{TF}(undef, no))
-    BJ = PseudoBlockMatrix(J, collect(outwidths), [widths[i] for i in iins])
-    x = collect(TF, Iterators.flatten((invals[i] for i in iins)))
+    BJ = PseudoBlockMatrix(J, collect(outwidths), [widths[i] for i in wiins])
+    x = collect(TF, Iterators.flatten((invals[i] for i in wiins)))
     return SimpleBlockJacobian(b, BJ, x, iins, nT, g, fdcache)
 end
 
 function jacobian(b::SimpleBlock, iins, nT::Int, varvals::NamedTuple, TF::Type=Float64)
-    invals = map(k->getfield(varvals, k), inputs(b))
+    # Assume there is only one cache per block and it is placed in the front
+    # (Do not place it at the end as there could be temporal terms added from macros)
+    vallast = varvals[inputs(b)[1]]
+    hascache = !(vallast isa Union{Real, AbstractArray{<:Real}})
+    # Copy the cache to ensure that original values are not mutated
+    cache = hascache ? deepcopy(vallast) : nothing
+    invals = map(k->getfield(varvals, k), hascache ? inputs(b)[2:end] : inputs(b))
     outwidths = map(k->length(getfield(varvals, k)), outputs(b))
-    j = SimpleBlockJacobian(b, iins, invals, outwidths, nT, TF)
+    j = SimpleBlockJacobian(b, iins, invals, cache, outwidths, nT, TF)
     return j(varvals)
 end
 
 @inline function getindex(j::SimpleBlockJacobian, r::Int, i::Int)
     v = view(j.J, Block(r, i))
     return Shift([(shift(invars(j.blk)[j.iins[i]]), 0)], [[v]], size(v))
-end
-
-_shift(p::Real, s::Int, nT::Int) = p
-_shift(p::Pair{Int,<:Vector}, s::Int, nT::Int) = view(p[2], p[1]+s+1:p[1]+s+nT)
-_shift(p::Pair{Int,<:Matrix}, s::Int, nT::Int) = view(p[2], :, p[1]+s+1:p[1]+s+nT)
-
-_getval(p::Real, t::Int) = p
-_getval(p::AbstractVector, t::Int) = p[t]
-_getval(p::AbstractMatrix, t::Int) = view(p, :, t)
-
-function transition!(varpaths::AbstractDict, b::SimpleBlock, nT::Int)
-    inpaths = ((_shift(varpaths[name(v)], shift(v), nT) for v in invars(b))...,)
-    outpaths = ((_shift(varpaths[n], 0, nT) for n in outputs(b))...,)
-    for t in 1:nT
-        vals = b((_getval(p, t) for p in inpaths)...)
-        for (i, val) in enumerate(vals)
-            if val isa AbstractVector
-                outpaths[i][:,t] .= val
-            else
-                outpaths[i][t] = val
-            end
-        end
-    end
 end
 
 function show(io::IO, b::SimpleBlock)

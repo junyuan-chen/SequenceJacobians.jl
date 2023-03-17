@@ -6,7 +6,7 @@ using Base: has_offset_axes
 using BlockArrays
 using CSV
 using CodecZlib: GzipDecompressorStream
-using DataFrames: DataFrame, nrow
+using DataFrames: DataFrame, ncol, nrow
 using Distributions
 using DynamicHMC
 using GSL
@@ -19,7 +19,7 @@ using NLopt
 using NLsolve
 using Random
 using Roots: Brent, Secant
-using SequenceJacobians: ArrayToArgs, _ar1!
+using SequenceJacobians: ArrayToArgs, ar1impulse!
 using StructArrays
 using TransformVariables: as, asℝ₊, as𝕀
 
@@ -45,9 +45,9 @@ const tests = [
     "blocks",
     "model",
     "jacobian",
-    #"irf",
+    "shock",
     "twoasset",
-    #"Horvath",
+    "Horvath",
     "estimation",
     "bayesian",
     "SmetsWouters"
