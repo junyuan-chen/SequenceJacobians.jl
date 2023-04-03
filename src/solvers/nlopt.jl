@@ -1,4 +1,4 @@
-const NLopt_Supported = Union{BayesOrTrans, MinimumDistance}
+const NLopt_Supported = BayesOrTrans
 
 # Wrap the objective function for tracing
 function nlopt_obj!(m::NLopt_Supported, θ, grad, counter, printgap)
@@ -45,15 +45,7 @@ function SequenceJacobians.mode(bm::BayesOrTrans, solver::Symbol, θ0::AbstractV
     r, counter = _solve!(bm, solver, θ0, true; verbose, kwargs...)
     # Solver result may not be at the last evaluation left in bm
     p = parent(bm)
-    _update_paravals!(p, bm isa BayesianModel ? r[2] : transform(bm.transformation, r[2]))
+    _update_paravals!(p.paravals, bm isa BayesianModel ? r[2] :
+        transform(bm.transformation, r[2]))
     return p[], r[2], counter, r
-end
-
-function solve!(md::MinimumDistance, solver::Symbol, θ0::AbstractVector;
-        verbose::Union{Bool,Integer}=false, kwargs...)
-    r, counter = _solve!(md, solver, θ0, false; verbose, kwargs...)
-    _update_paravals!(md, r[2])
-    # Ensure that md.vals matches md.paravals
-    evaluate!(md, (), r[2])
-    return md[], counter, r
 end

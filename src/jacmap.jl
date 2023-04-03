@@ -90,29 +90,12 @@ function muladd!(Smap::ShiftMap{TF}, S::Shift{TF}, Mlast::MatrixMap{TF}, inmat=n
     return Smap
 end
 
-function mul!(C::AbstractVecOrMat, S::ShiftMap, s::Number, β::Number=false)
+function mul!(C::AbstractVecOrMat, S::ShiftMap, s::Number, β::Number=false; kwargs...)
     iszero(β) ? fill!(C, zero(eltype(C))) : isone(β) ? C : rmul!(C, β)
     for i in eachindex(S.outs)
         ini = S.ins[i]
-        if ini isa Bool
-            mul!(C, S.outs[i], ini, s, true)
-        else
-            # C is allowed to be smaller than S in the time dimension
-            # This is useful for trimming the values at the end
-            if S.outs[1].size == (1, 1)
-                mul!(C, S.outs[i], view(ini, 1:size(C,1), 1:size(C,2)), s, true)
-            else
-                nT = Int(size(C,1)/S.outs[1].size[1])
-                if nT * size(C,2) < size(ini, 1) # ! Does it work?
-                    inib = _block1(ini, Int(size(ini,1)/S.outs[1].size[2]))
-                    rb = blocksize(inib,1)
-                    blks = [view(view(inib, ib, :), 1:nT, 1:size(C,2)) for ib in 1:rb]
-                    mul!(C, S.outs[i], mortar(_reshape(blks, rb, 1)), s, true)
-                else
-                    mul!(C, S.outs[i], ini, s, true)
-                end
-            end
-        end
+        # C is allowed to be smaller than S
+        mul!(C, S.outs[i], ini, s, true)
     end
     return C
 end
@@ -188,9 +171,38 @@ function _updateins!(Mmap::MatrixMap, iins::Union{Vector{Int},Nothing}=nothing)
 end
 
 # C is allowed to be smaller than M
-#! To do: What if out is for a BlockArray?
-mul!(C::AbstractVecOrMat, M::MatrixMap, s::Number, β::Number=false) =
-    mul!(C, view(M.out, 1:size(C,1), 1:size(C,2)) , s, true, β)
+# For now, use external info to tell the block sizes
+function mul!(C::AbstractVecOrMat, M::MatrixMap, s::Number, β::Number=false;
+        mb::Int=1, nb::Int=1)
+    if mb === 1 && nb === 1
+        return mul!(C, view(M.out, 1:size(C,1), 1:size(C,2)), s, true, β)
+    else
+        nT = Int(size(M.out,1)/mb)
+        if size(M.out,2)/nb == nT # M is the entrie Jacobian matrix
+            m = _block2(M.out, nT, nT)
+            nT1 = Int(size(C, 1) / mb)
+            nT2 = Int(size(C, 2) / nb)
+            Cblk = _block2(C, nT1, nT2)
+            for j in 1:nb
+                for i in 1:mb
+                    Cb = view(Cblk, Block(i, j))
+                    copyto!(Cb, view(view(m, Block(i,j)), 1:nT1, 1:nT2))
+                end
+            end
+            return C
+        else # M is the Jacobian-shock product
+            m = _block1(M.out, nT)
+            nT1 = Int(size(C, 1) / mb)
+            Cblk = _block1(C, nT1)
+            nT2 = size(C, 2)
+            for i in 1:mb
+                Cb = view(Cblk, Block(i, 1))
+                copyto!(Cb, view(view(m, Block(i,1)), 1:nT1, 1:nT2))
+            end
+            return C
+        end
+    end
+end
 
 show(io::IO, S::ShiftMap{TF}) where TF =
     print(io, "ShiftMap{", TF, "}(", length(S.outs), ')')

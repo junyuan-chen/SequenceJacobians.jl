@@ -1,10 +1,11 @@
 module SequenceJacobians
 
 using AutoregressiveModels: ARMAProcess
-using Base: RefValue, ReshapedArray
+using Base: RefValue, ReshapedArray, Callable, Fix1, Fix2, @propagate_inbounds
 using BlockArrays: BlockMatrix, PseudoBlockMatrix, PseudoBlockVector, Block,
     BlockedUnitRange, mortar, blocksize, blocksizes, _BlockedUnitRange,
     MemoryLayout, _copyto!
+using CommonSolve: solve
 using Distributions: Distribution, logpdf
 using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
 using FastLapackInterface: LUWs
@@ -21,6 +22,7 @@ using Printf
 using Requires
 using SplitApplyCombine: splitdimsview
 using Statistics: mean
+using StructArrays: StructArray
 using Tables
 using TransformVariables: AbstractTransform, transform_logdensity
 using TransformedLogDensities: TransformedLogDensity
@@ -29,7 +31,7 @@ using Tullio: @tullio
 import AutoregressiveModels: simulate!, simulate, impulse!, impulse
 import Base: ==, eltype, show, Matrix, parent, getindex, copy, convert, iterate, length,
     ndims, has_offset_axes, zero, iszero, +, *
-import CommonSolve: solve!
+import CommonSolve: init, solve!
 import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
 import LinearAlgebra: isdiag, mul!
@@ -53,6 +55,7 @@ export supconverged,
        interpolate_coord!,
        apply_coord!,
        setmin!,
+       rowblocks,
        acceptance_rate,
 
        Shift,
@@ -192,6 +195,8 @@ export supconverged,
        aswidetable,
        aslongtable,
 
+       ImpulseUpdate,
+
        BayesianModel,
        TransformedBayesianModel,
        BayesOrTrans,
@@ -203,9 +208,7 @@ export supconverged,
        logposterior!,
        logposterior_and_gradient!,
        logdensity_hessian!,
-       vcov!,
-
-       MinimumDistance
+       vcov!
 
 include("utils.jl")
 include("shift.jl")
@@ -221,8 +224,8 @@ include("combinedblock.jl")
 include("macros.jl")
 include("allcov.jl")
 include("shock.jl")
+include("impulseupdate.jl")
 include("bayesian.jl")
-include("mindist.jl")
 include("examples/utils.jl")
 include("examples/rbc.jl")
 include("examples/KrusellSmith.jl")
@@ -251,6 +254,11 @@ function __init__()
     end
     @require Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665" begin
         include("solvers/roots.jl")
+    end
+    @static if !isdefined(Base, :get_extension)
+        @require NonlinearSystems = "deb0877a-d74a-4aeb-b6ac-c17f6fb4122e" begin
+            include("../ext/SeqJacNonlinearSystemsExt.jl")
+        end
     end
 end
 

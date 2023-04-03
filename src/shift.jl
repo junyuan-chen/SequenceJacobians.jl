@@ -26,7 +26,7 @@ const ShiftOrComp{T} = Union{Shift{T}, CompositeShift{T}}
         α::Number=true, β::Number=false) where {T1,T2}
     iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
     @inbounds for ((id, m), vs) in zip(S.d, S.v)
-        val = convert(T1, s * α * sum(v->v[1], vs))
+        val = convert(T1, s * α * sum(Fix2(getindex, 1), vs))
         for k in diagind(C, id)[m+1:end]
             C[k] += val
         end
@@ -253,7 +253,7 @@ end
     D = S.d
     V = S.v
     # This ensures all values get multiplied
-    iszero(β) ? foreach(v->fill!(v, zero(T)), V) : isone(β) ? V : foreach(v->rmul!(v, β), V)
+    iszero(β) ? fill!(V, zero(T)) : isone(β) ? V : rmul!(V, β)
     M = S1.size[1]
     N = S2.size[2]
     M == N == 1 || throw(DimensionMismatch("output consists of multiple blocks"))
@@ -311,19 +311,32 @@ function (*)(S1::Shift{T,false}, S2::CompositeShift{T,Matrix{T}}) where T
     return mul!(out, S1, S2, true, true)
 end
 
-@inline function mul!(C::AbstractVecOrMat{T1}, S::Shift{T2,true}, B::AbstractVecOrMat,
+@propagate_inbounds _getval(S::Shift{T,true}, k::Int) where T =
+    sum(Fix2(getindex, 1), S.v[k])
+@propagate_inbounds _getval(S::CompositeShift{T,T}, k::Int) where T = S.v[k]
+@propagate_inbounds _getval(S::Shift{T,false}, k::Int, i::Int, j::Int) where T =
+    sum(v->v[i,j], S.v[k])
+@propagate_inbounds _getval(S::CompositeShift{T,Matrix{T}}, k::Int, i::Int,
+    j::Int) where T = S.v[k][i,j]
+
+@inline function mul!(C::AbstractVecOrMat{T1},
+        S::Union{Shift{T2,true}, CompositeShift{T2,T2}}, B::AbstractVecOrMat,
         α::Number, β::Number) where {T1,T2}
     # C could contain NaN
     iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
-    # Need to call size twice in case B is a Vector
-    r, c = size(B, 1), size(B, 2)
+    # B and C are allowed to have different sizes
+    rc, rb = size(C, 1), size(B, 1)
+    c = min(size(C, 2), size(B, 2))
     @inbounds for (k, (id, m)) in enumerate(S.d)
-        -r < id < r && m < r - abs(id) || continue
-        v = convert(T1, α * sum(v->v[1], S.v[k]))
+        -rb < id < rb && m < rb - abs(id) || continue
+        v = convert(T1, α * _getval(S, k))
         adj1 = min(id, 0)
         adj2 = max(id, 0)
+        i0 = m + 1 - adj1
+        i0 > rc && continue
+        il = min(rb-adj2, rc)
         for j in 1:c
-            for i in m+1-adj1:r-adj2
+            for i in i0:il
                 C[i,j] += v * B[i+id,j]
             end
         end
@@ -331,81 +344,32 @@ end
     return C
 end
 
-@inline function mul!(C::AbstractVecOrMat{T1}, S::CompositeShift{T2,T2}, B::AbstractVecOrMat,
+@inline function mul!(C::AbstractVecOrMat{T1},
+        S::Union{Shift{T2,false}, CompositeShift{T2,Matrix{T2}}}, B::AbstractVecOrMat,
         α::Number, β::Number) where {T1,T2}
-    # C could contain NaN
-    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
-    # Need to call size twice in case B is a Vector
-    r, c = size(B, 1), size(B, 2)
-    @inbounds for (k, (id, m)) in enumerate(S.d)
-        -r < id < r && m < r - abs(id) || continue
-        v = convert(T1, α * S.v[k])
-        adj1 = min(id, 0)
-        adj2 = max(id, 0)
-        for j in 1:c
-            for i in m+1-adj1:r-adj2
-                C[i,j] += v * B[i+id,j]
-            end
-        end
-    end
-    return C
-end
-
-@inline function mul!(C::AbstractVecOrMat{T1}, S::Shift{T2,false}, B::AbstractVecOrMat,
-        α::Number, β::Number) where {T1,T2}
-    nT = Int(size(C,1)/S.size[1])
-    nT1 = Int(size(B,1)/S.size[2])
-    nT == nT1 && size(C,2) == size(B,2) || throw(DimensionMismatch(
-        "C has size ($(size(C))); S has block size ($(S.size)); B has size ($(size(B)))"))
-    Cb = _block1(C, nT)
-    Bb = _block1(B, nT)
     M, N = S.size
+    # B and C are allowed to have different sizes
+    rc = Int(size(C,1)/M)
+    rb = Int(size(B,1)/N)
+    Cb = _block1(C, rc)
+    Bb = _block1(B, rb)
+    c = min(size(C, 2), size(B, 2))
     # C could contain NaN
     iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
     @inbounds for j in 1:N
         Bblk = view(Bb, Block(j, 1))
         for i in 1:M
             Cblk = view(Cb, Block(i, 1))
-            r = nT
             for (k, (id, m)) in enumerate(S.d)
-                -r < id < r && m < r - abs(id) || continue
-                v = convert(T1, α * sum(v->v[i,j], S.v[k]))
+                -rb < id < rb && m < rb - abs(id) || continue
+                v = convert(T1, α * _getval(S, k, i, j))
                 adj1 = min(id, 0)
                 adj2 = max(id, 0)
-                for jj in axes(B, 2)
-                    for ii in m+1-adj1:r-adj2
-                        Cblk[ii,jj] += v * Bblk[ii+id,jj]
-                    end
-                end
-            end
-        end
-    end
-    return C
-end
-
-@inline function mul!(C::AbstractVecOrMat{T1}, S::CompositeShift{T2,Matrix{T2}},
-        B::AbstractVecOrMat, α::Number, β::Number) where {T1,T2}
-    nT = Int(size(C,1)/S.size[1])
-    nT1 = Int(size(B,1)/S.size[2])
-    nT == nT1 && size(C,2) == size(B,2) || throw(DimensionMismatch(
-        "C has size ($(size(C))); S has block size ($(S.size)); B has size ($(size(B)))"))
-    Cb = _block1(C, nT)
-    Bb = _block1(B, nT)
-    M, N = S.size
-    # C could contain NaN
-    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
-    @inbounds for j in 1:N
-        Bblk = view(Bb, Block(j, 1))
-        for i in 1:M
-            Cblk = view(Cb, Block(i, 1))
-            r = nT
-            for (k, (id, m)) in enumerate(S.d)
-                -r < id < r && m < r - abs(id) || continue
-                v = convert(T1, α * S.v[k][i,j])
-                adj1 = min(id, 0)
-                adj2 = max(id, 0)
-                for jj in axes(B, 2)
-                    for ii in m+1-adj1:r-adj2
+                i0 = m + 1 - adj1
+                i0 > rc && continue
+                il = min(rb-adj2, rc)
+                for jj in 1:c
+                    for ii in i0:il
                         Cblk[ii,jj] += v * Bblk[ii+id,jj]
                     end
                 end

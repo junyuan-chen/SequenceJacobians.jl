@@ -22,7 +22,7 @@
         @test log(p.Z[3]) ≈ -8.703794453549149 atol=1e-8
 
         m = hv.Horvathmodel(p, calis)
-        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
+        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N), sA=1.0))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
         gs = GMaps(gj, gj.endosrcs)
@@ -42,6 +42,7 @@
             926.910364350904] atol=1e-3
     end
 
+    if !Sys.iswindows() # Skip GitHub CI on Windows due to OutOfMemoryError
     @testset "hwelast=-1.04" begin
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1.04)
         ss = SteadyState(mss, calis)
@@ -60,7 +61,7 @@
         @test log(p.Z[1]) ≈ -11.992266967437140 atol=1e-8
 
         m = hv.Horvathmodel(p, calis)
-        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N)))
+        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N), sA=1.0))
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
         gs = GMaps(gj)
@@ -126,5 +127,24 @@
             0.0147788643609457, 0.0140718615393009] atol=1e-4
         @test s[11:14,8] ≈ [0.0206388724551132, 0.0201142193464190,
             0.0211262835460427, 0.0243975519413298] atol=1e-3
+
+        dA = vec(A)
+        j1 = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T, dZs=(:A=>dA,))
+        @test j1.ncol == [1, 2220, 2220]
+        gj1 = GEJacobian(j1, :A)
+        gs1 = GMaps(gj1)
+        tarvals = rowblocks(zeros(N*16), 16)
+        tarblk = rowblocks(gs1(:A, :Y), T)
+        @test reshape(tarblk,T,N) ≈ sum(irf[:A][:Y], dims=3)
+        for s in 1:N
+            tarvals[Block(s)] .= view(view(tarblk, Block(s)), 1:16)
+        end
+        u1 = ImpulseUpdate(gs1, :sA, :A, :Y, 16)
+        md = ImpulseResidual(u1, tarvals)
+        @test u1[] == (sA=1.0,)
+        fdf = OnceDifferentiable(md, zeros(1), zeros(length(tarvals)))
+        r1 = solve(Hybrid{LeastSquares}, fdf, [1.1], showtrace=1)
+        @test Symbol(getexitstate(r1)) == :ftol_reached
+    end
     end
 end

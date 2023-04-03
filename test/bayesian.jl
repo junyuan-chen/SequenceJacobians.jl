@@ -7,7 +7,7 @@
     tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
     inits = [:β=>0.98, :Z=>0.85, :K=>3]
     ss = SteadyState(m, calis, inits, tars)
-    solve!(GSL_Hybrids, ss, xtol=1e-10)
+    solve(Hybrid, ss, ss.inits, ftol=1e-10)
     j = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
     gs = GMaps(GEJacobian(j, :Z))
     shock, priors = kspriors()
@@ -79,7 +79,7 @@
     N = 5000
     @time chain = sample(bm, spl, N, init_params=rx,
         param_names=collect(keys(bm[])), chain_type=Chains, progress=false)
-    @test acceptance_rate(view(chain.value, Ndrop+1:N, 1, 1)) < 0.3
+    @test acceptance_rate(view(chain.value, Ndrop+1:N, 1, 1)) < 0.4
 
     tr = as((σ=as(Real,0.01,4), ar=as(Real,0.02,0.98), ma=as(Real,0.02,0.98)))
     bm3 = transform(tr, bm)

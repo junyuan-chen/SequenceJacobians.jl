@@ -10,7 +10,7 @@ end
 shockse(::ShockProcess{σ}) where σ = σ
 
 function impulse!(out::AbstractVecOrMat, sh::ShockProcess, paravals::NamedTuple)
-    invals = map(k->getfield(paravals, k), inputs(sh))
+    invals = NamedTuple{inputs(sh)}(paravals)
     if all(x->x isa Real, invals)
         sh.f!(out, invals...)
         return out
@@ -19,7 +19,7 @@ function impulse!(out::AbstractVecOrMat, sh::ShockProcess, paravals::NamedTuple)
         N = length(invals[1])
         outb = _block1(out, Int(size(out,1)/N))
         for i in 1:N
-            sh.f!(view(outb, Block(i,1)), map(x->x[i], invals)...)
+            sh.f!(view(outb, Block(i,1)), map(Fix2(getindex, i), invals)...)
         end
         return out
     end

@@ -44,32 +44,19 @@ isrootsolvercache(ca::Any) = false
     rootsolvercache(solver, ss::SteadyState; kwargs...)
 
 Try to construct the cache object of `solver` for solving the steady state defined by `ss`.
-The fallback method returns `nothing`.
 """
 function rootsolvercache end
 
 """
-    solve!(solver, f, x0; kwargs...)
-    solve!(SolverType, f, x0; kwargs...)
-    solve!(cache, x0; kwargs...)
+    root(solver)
 
-Solve the system of equations defined by function `f`
-with the specified `solver` or `SolverType`
-with initial value `x0`.
-If a cache object associated with the solver is available,
-one may directly provide the `cache` instead.
-With recognized objects,
-[`isrootsolver`](@ref) returns `true` for `solver` or `SolverType`;
-[`isrootsolvercache`](@ref) returns `true` for `cache`.
-
-If [`isvectorrootsolver`](@ref) returns `true`,
-the function `f` must takes two array arguments,
-with the first being the reference to the residuals of the equations
-and the second being the candidate of a root `x`;
-`x0` is required to be an array.
-
-If [`isscalarrootsolver`](@ref) returns `true`,
-the function `f` only takes the root candidate `x` as the only argument
-and `x0` is required to be a `Real`.
+Retrieve the solution vector from `solver`.
 """
-function solve! end
+function root end
+
+"""
+    rootisfound(solver)
+
+Determine whether the solver has found the solution successfully.
+"""
+function rootisfound end

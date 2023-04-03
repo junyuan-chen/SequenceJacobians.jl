@@ -58,7 +58,7 @@ using `ca` to avoid memory allocations.
 Results are copied to `out` if provided
 or otherwise returned as a view of `ca.ir`.
 This method is for scenarios in which computation for `x` of the same size
-    needs to be repeated for many times.
+needs to be repeated for many times.
 See also [`FFTWAllCovCache`](@ref), [`allcov`](@ref) and [`allcor!`](@ref).
 
 $_allcovargdoc

@@ -351,34 +351,18 @@ end
 residuals!(ss::SteadyState) = residuals!(ss.resids, ss, ss.inits)
 residuals!(ss::SteadyState, inputs::AbstractVector) = residuals!(ss.resids, ss, inputs)
 
-function criterion!(ss::SteadyState; weight::Union{AbstractMatrix,UniformScaling}=I)
-    resids = residuals!(ss)
-    return resids'*weight*resids
-end
+(ss::SteadyState)(resids::AbstractVector, inputs::AbstractVector) =
+    residuals!(resids, ss, inputs)
 
-function criterion!(ss::SteadyState, inputs::AbstractVector;
-        weight::Union{AbstractMatrix,UniformScaling}=I)
-    resids = residuals!(ss, inputs)
-    return resids'*weight*resids
-end
-
-function solve!(ST::Type, ss::SteadyState; keepinits::Bool=false, kwargs...)
-    f!(y,x) = residuals!(y, ss, x)
-    r = solve!(ST, f!, ss.inits; kwargs...)
+# Should only be used internally (eg., by CombinedBlock)
+function _solve!(ST::Type, ss::SteadyState, x0=ss.inits; keepinits::Bool=false, kwargs...)
+    r = solve(ST, ss, x0; kwargs...)
     # Results returned by the solver may be the guess for the next iteration
-    keepinits || copyto!(ss.inits, r[1])
+    keepinits || copyto!(ss.inits, root(r))
     return ss[]
 end
 
-function solve!(ca, ss::SteadyState; keepinits::Bool=false, kwargs...)
-    isrootsolvercache(ca) ||
-        return solve!(typeof(ca), ss; keepinits=keepinits, kwargs...)
-    r = solve!(ca, ss.inits; kwargs...)
-    keepinits || copyto!(ss.inits, r[1])
-    return ss[]
-end
-
-function solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
+function _solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
         kwargs...) where {TF,NT,BLK}
     # Update the values without solving for any target
     if @generated

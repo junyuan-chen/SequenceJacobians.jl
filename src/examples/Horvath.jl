@@ -166,9 +166,10 @@ end
     return Ltotdiff
 end
 
-@simple function valueadded(p, A, K, L)
+# sA is added here solely for testing purposes
+@simple function valueadded(p, A, K, L, sA)
     VA = p.VA
-    VA .= A.^(1.0./p.θ) .* lag(K).^p.α .* L.^(1.0.-p.α)
+    VA .= sA .* A.^(1.0./p.θ) .* lag(K).^p.α .* L.^(1.0.-p.α)
     return VA
 end
 
@@ -243,10 +244,10 @@ end
 
 function Horvathmodel(p, calis)
     N = length(p.α)
-    calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :K=>p.K, :frisch=>calis[:frisch]]
+    calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :sA=>1.0, :K=>p.K, :frisch=>calis[:frisch]]
     calisbζ = [:p=>p, :μ=>p.μ, :I=>p.I, :hwelast=>calis[:hwelast]]
     bY = block([labor_blk(), labortot_blk(), valueadded_blk(), intermediate_blk(),
-        production_blk()], [:μ, :A, :K], [:Y, :Ltot, :L, :VA, :X],
+        production_blk()], [:μ, :A, :K, :sA], [:Y, :Ltot, :L, :VA, :X],
         calisbY, [:Y=>p.Y, :Ltot=>sum(p.L)],
         [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=GSL_Hybrids)
     bζ = block([investuse_blk(), investprice_blk()],

@@ -164,9 +164,13 @@ _getvarlength(vars, vals::NamedTuple) = sum(v->length(vals[v]), vars)
 @inline _block1(A::AbstractMatrix, nT::Int) =
     PseudoBlockMatrix(A, (_BlockedUnitRange(1, nT:nT:size(A,1)), Base.OneTo(size(A,2))))
 
-@inline _block2(A::AbstractMatrix, nT::Int) =
-    PseudoBlockMatrix(A, (_BlockedUnitRange(1, nT:nT:size(A,1)),
-        _BlockedUnitRange(1, nT:nT:size(A,2))))
+@inline _block2(A::AbstractMatrix, nT1::Int, nT2::Int=nT1) =
+    PseudoBlockMatrix(A, (_BlockedUnitRange(1, nT1:nT1:size(A,1)),
+        _BlockedUnitRange(1, nT2:nT2:size(A,2))))
+
+@inline rowblocks(A::AbstractMatrix, nT::Int) = _block1(A, nT)
+@inline rowblocks(A::AbstractVector, nT::Int) =
+    PseudoBlockVector(A, (_BlockedUnitRange(1, nT:nT:size(A,1)),))
 
 function _transform!(d::Dict, trans::Vector{Symbol}, varvals::NamedTuple)
     for irfs in values(d)

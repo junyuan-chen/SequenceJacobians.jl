@@ -1,7 +1,6 @@
 @testset "impulse" begin
     ss = rbcss()
-    f!(y,x) = residuals!(y, ss, x)
-    solve!(GSL_Hybrids, ss, xtol=1e-10)
+    solve(Hybrid, ss, ss.inits, ftol=1e-10)
     J = TotalJacobian(model(ss), [:Z,:K,:L], [:euler, :goods_mkt], ss[], 300)
     gj = GEJacobian(J, :Z)
     gs = GMaps(gj)

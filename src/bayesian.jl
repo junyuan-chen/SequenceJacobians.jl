@@ -1,18 +1,19 @@
 abstract type AbstractEstimator{TF<:AbstractFloat, NT<:NamedTuple} end
 
-struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3, P,
+struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3,
+        U<:Union{ImpulseUpdate, Nothing},
         GJ<:GEJacobian{TF}, TC<:AbstractAllCovCache, TE<:Union{AbstractVector{TF},Nothing},
         GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple} <: AbstractEstimator{TF, NT}
     shockses::NTuple{N1,Symbol}
     shockparas::NTuple{N2,Symbol}
     strucparas::NTuple{N3,Symbol}
     priors::PR
-    lookuppara::Dict{Symbol,NTuple{3,Int}}
+    lookuppara::Dict{Symbol,NTuple{4,Int}}
     exovars::Vector{Symbol}
     observables::Vector{Pair}
     lookupobs::Dict{Symbol,Int}
     paravals::RefValue{NT}
-    plan::P
+    impulseupdate::U
     gs::GMaps{TF,GJ}
     shocks::SH
     Z::Vector{Vector{TF}}
@@ -107,16 +108,32 @@ function _demean!(Y, N::Int, T::Int)
     end
 end
 
-function _fillG!(G::AbstractArray, gs::GMaps, exovars, observables, nT::Int)
-    for (j, z) in enumerate(exovars)
+function _fillGfull!(G::AbstractArray{T,3}, gs::GMaps, exos::Vector{Pair{Symbol,Int}},
+        endos::Vector{Pair{Symbol,Int}}) where T
+    nT = size(G, 2)
+    j0 = 0
+    for (z, wz) in exos
+        Gz = selectdim(G, 3, j0+1:j0+wz)
         i0 = 0
-        Gz = selectdim(G, 3, j)
-        for (o, _) in observables
-            gs(view(Gz, i0+1:i0+nT, :), z, o)
-            i0 += nT
+        for (u, wu) in endos
+            mul!(_reshape(selectdim(Gz, 1, i0+1:i0+wu*nT), nT*wu, nT*wz), gs[z,u], true;
+                mb=wu, nb=wz)
+            i0 += wu*nT
         end
+        j0 += wz
     end
 end
+
+function _setparaname!(d::Dict, v::Vector, n::Symbol, itype::Int, iall::Int, s::Int)
+    haskey(d, n) && throw(ArgumentError("shock parameter name $n is not unique"))
+    push!(v, n)
+    iall += 1
+    d[n] = (itype, length(v), iall, s)
+    return iall
+end
+
+_mean(d::Distribution) = mean(d)
+_mean(ds::StructArray{<:Distribution}) = map(mean, ds)
 
 function bayesian(gs::GMaps{TF}, shocks, observables,
         priors::ValidVarInput, data;
@@ -125,56 +142,59 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
         fdtype=Val(:forward), fdkwargs=NamedTuple(),
         allcovcachekwargs=NamedTuple()) where TF
     gj = gs.gj
+    varvals = gj.tjac.varvals[]
     shocks isa ShockProcess && (shocks = (shocks,))
     nsh = length(shocks)
-    shockses = ntuple(i->shockse(shocks[i]), nsh)
-    exovars = [outputs(x)[1] for x in shocks]
-    for z in exovars
-        z in gj.exovars || throw(ArgumentError("$z is not an exogenous variable"))
-    end
-    nexo = length(exovars)
-    varvals = gj.tjac.varvals[]
-    nexo == _getvarlength(exovars, varvals) || throw(ArgumentError(
-        "not all exogenous variables are scalars"))
-    nexo == nsh || throw(ArgumentError(
-        "shock process is not specified for every exogenous variable"))
-    # The tuple corresponds to parameter type, index within type and index among all
-    lookuppara = Dict{Symbol,Tuple{Int,Int,Int}}(v=>(0,i,i) for (i,v) in enumerate(shockses))
-    length(lookuppara) == nsh || throw(ArgumentError(
-        "names for shock standard errors are not unique"))
-    shocks = (shocks...,)
+    exovars = Vector{Symbol}(undef, nsh)
+    # The tuple corresponds to parameter type, index within type, index among all
+    # and index for the associated shock (if positive)
+    lookuppara = Dict{Symbol,Tuple{Int,Int,Int,Int}}()
+    shockses = Symbol[]
     shockparas = Symbol[]
-    i = 0
-    for s in shocks
-        for v in inputs(s)
-            haskey(lookuppara, v) && throw(ArgumentError(
-                "name of shock process parameter ($v) is not unique"))
-            push!(shockparas, v)
-            i += 1
-            lookuppara[v] = (1,i,nsh+i)
+    npara = 0
+    for s in 1:nsh
+        sh = shocks[s]
+        z = outputs(sh)[1]
+        z in gj.exovars || throw(ArgumentError("$z is not an exogenous variable"))
+        exovars[s] = z
+        npara = _setparaname!(lookuppara, shockses, shockse(sh), 0, npara, s)
+    end
+    # Loop the other parameters separately to keep indices for shockses in the front
+    for s in 1:nsh
+        for n in inputs(shocks[s])
+            npara = _setparaname!(lookuppara, shockparas, n, 1, npara, s)
         end
     end
-    shockparas = (shockparas...,)
-    nshpara = length(lookuppara)
     for k in keys(lookuppara)
         haskey(gj.tjac.invpool, k) && throw(ArgumentError(
             "name of shock parameter $k coincides with a structural parameter"))
     end
-    i1 = 0
+    shocks = (shocks...,)
+    shockses = (shockses...,)
+    shockparas = (shockparas...,)
+
     priors isa Pair && (priors = (priors,))
-    npara = length(priors)
-    vpriors = Vector{Distribution}(undef, npara)
-    strucparas = Vector{Symbol}(undef, npara-length(lookuppara))
+    vpriors = Vector{Any}(undef, npara)
+    strucparas = Symbol[]
     for (v, p) in priors
+        # Assume there is no duplicate of parameter name in priors
         tp = get(lookuppara, v, nothing)
-        if tp === nothing
-            i1 += 1
-            i2 = nshpara + i1
-            vpriors[i2] = p
-            strucparas[i1] = v
-            lookuppara[v] = (2, i1, i2)
+        n = tp === nothing ? v : exovars[tp[4]]
+        if p isa Distribution
+            length(varvals[n]) == 1 || throw(ArgumentError(
+                "$v should match only one prior distribution"))
+        elseif p isa StructVector{<:Distribution}
+            length(p) == length(varvals[n]) || throw(ArgumentError(
+                "$v should match $(length(varvals[n])) prior distributions"))
         else
-            _, _, i2 = tp
+            throw(ArgumentError("element of type $(typeof(p)) is not accepted for priors"))
+        end
+        if tp === nothing
+            push!(vpriors, p)
+            push!(strucparas, v)
+            lookuppara[v] = (2, length(strucparas), length(vpriors), 0)
+        else
+            _, _, i2, _ = tp
             vpriors[i2] = p
         end
     end
@@ -196,7 +216,8 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     priors = (vpriors...,)
     strucparas = (strucparas...,)
     paras = (shockses..., shockparas..., strucparas...)
-    paravals = NamedTuple{paras}(map(mean, priors))
+    paravals = NamedTuple{paras}(map(_mean, priors))
+
     observables isa Union{Symbol, Pair} && (observables = (observables,))
     obs, lookupobs = _check_observables(gj, observables)
     Y, Nobs, Tobs = _check_data(data, obs, varvals)
@@ -205,16 +226,33 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     Ycache = similar(Y)
     nT = gj.tjac.nT - nTtrim
     if isempty(strucparas)
-        p = nothing
-        Z = [Vector{TF}(undef, nT) for _ in 1:nsh]
-        G = Array{TF,3}(undef, nT*Nobs, nT, nsh)
-        _fillG!(G, gs, exovars, obs, nT)
+        u = nothing
+        Z = Vector{Vector{TF}}(undef, nsh)
+        wexo = 0
+        wendo = 0
+        exos = Vector{Pair{Symbol,Int}}(undef, length(exovars))
+        endos = Vector{Pair{Symbol,Int}}(undef, length(observables))
+        for (j, exo) in enumerate(exovars)
+            wj = length(varvals[exo])
+            wexo += wj
+            exos[j] = exo=>wj
+            Z[j] = Vector{TF}(undef, wj*nT)
+        end
+        for (i, (endo, _)) in enumerate(observables)
+            wi = length(varvals[endo])
+            wendo += wi
+            endos[i] = endo=>wi
+        end
+        G = Array{TF,3}(undef, wendo*nT, nT, wexo)
+        _fillGfull!(G, gs, exos, endos)
+        GZ = Array{TF,3}(undef, nT, wendo, wexo)
     else
-        p = plan(gj, strucparas; dZvars=exovars)
+        u = ImpulseUpdate(gs, strucparas, exovars, map(Fix2(getindex, 1), observables), nT;
+            dZvars=exovars)
         Z = [reshape(dZs[z], length(dZs[z])) for z in exovars]
         G = Array{TF,3}(undef, (0,0,0))
+        GZ = u.vals
     end
-    GZ = Array{TF,3}(undef, nT, Nobs, nsh)
     SE = Vector{TF}(undef, nsh)
     allcovcache = FFTWAllCovCache(nT, Nobs, nsh, TF; allcovcachekwargs...)
     V = Matrix{TF}(undef, nY, nY)
@@ -225,7 +263,7 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     d2lcache = HessianCache{Vector{TF},Val(:hcentral),Val(true)}(
         similar(dl), similar(dl), similar(dl), similar(dl))
     return BayesianModel(shockses, shockparas, strucparas, priors, lookuppara,
-        exovars, obs, lookupobs, Ref(paravals), p, gs, shocks, Z, G, GZ, SE,
+        exovars, obs, lookupobs, Ref(paravals), u, gs, shocks, Z, G, GZ, SE,
         allcovcache, V, measurement_error, Y, Ycache, nT, Tobs,
         dl, dlcache, d2l, d2lcache, fdkwargs)
 end
@@ -246,55 +284,77 @@ parent(bm::TransformedBayesianModel) = bm.log_density_function
 @inline getindex(bm::BayesOrTrans) = parent(bm).paravals[]
 @inline getindex(bm::BayesOrTrans, i) = getindex(bm[], i)
 
-function logprior(bm::BayesianModel{TF,NT,PR}, θ) where {TF,NT,PR}
+_logpdf(d::Distribution, θ::Number) = logpdf(d, θ)
+function _logpdf(ds::StructArray{<:Distribution}, θs::Number)
+    s = zero(eltype(θs))
+    @inbounds for i in eachindex(ds)
+        s += logpdf(ds[i], θs[i])
+    end
+    return s
+end
+
+function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,PR}
     # The generated part avoids allocations for array θ
-    # It is unnecessary if θ is tuple
     if @generated
-        ex = :(logpdf(bm.priors[1], θ[1]))
-        N = length(PR.parameters)
-        if N > 1
-            for i in 2:N
-                ex = :($ex + logpdf(bm.priors[$i], θ[$i]))
+        ptypes = PR.parameters
+        if ptypes[1] <: Distribution
+            ex = :(lp = _logpdf(bm.priors[1], θ[1]); i0 = 2)
+        else
+            ex = quote
+                p1 = bm.priors[1]
+                lp = _logpdf(p1, view(θ, 1:length(p1)))
+                i0 = length(p1) + 1
             end
         end
-        return ex
+        N = length(ptypes)
+        if N > 1
+            for i in 2:N
+                if ptypes[i] <: Distribution
+                    ex = :($ex; lp += _logpdf(bm.priors[$i], θ[i0]); i0 += 1)
+                else
+                    pp = Symbol(:p, i)
+                    ex = quote
+                        $ex
+                        $pp = bm.priors[$i]
+                        lp += _logpdf($pp, view(θ, i0:i0+length($pp)-1))
+                        i0 += length($pp)
+                    end
+                end
+            end
+        end
+        return :($ex; lp)
     else
-        return sum(map(logpdf, bm.priors, θ))
+        ptypes = PR.parameters
+        if ptypes[1] <: Distribution
+            lp = _logpdf(bm.priors[1], θ[1])
+            i0 = 2
+        else
+            p1 = bm.priors[1]; lp = _logpdf(p1, view(θ, 1:length(p1)))
+            i0 = length(p1) + 1
+        end
+        N = length(ptypes)
+        if N > 1
+            for i in 2:N
+                if ptypes[i] <: Distribution
+                    lp += _logpdf(bm.priors[i], θ[i0])
+                    i0 += 1
+                else
+                    pp = bm.priors[i]
+                    lp += _logpdf(pp, view(θ, i:i+length(pp)-1))
+                    i0 += length(pp)
+                end
+            end
+        end
+        return lp
     end
 end
+
+# Fallback method is intended to handle NamedTuple and Tuple θ
+logprior(bm::BayesianModel{TF,NT,PR}, θ) where {TF,NT,PR} =
+    sum(map(_logpdf, bm.priors, θ))
 
 logprior(bm::TransformedBayesianModel, θ) =
     logprior(parent(bm), transform(bm.transformation, θ))
-
-# ! To do: Support array parameters?
-function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::AbstractVector) where {TF,NT}
-    if @generated
-        names = NT.parameters[1]
-        N = length(names)
-        ex = :(())
-        for i in 1:N
-            push!(ex.args, :(θ[$i]))
-        end
-        ex = :(vals = NamedTuple{$names}($ex); m.paravals[] = vals)
-        return ex
-    else
-        names = NT.parameters[1]
-        vals = NamedTuple{names}(ntuple(i->θ[i], length(names)))
-        m.paravals[] = vals
-        return vals
-    end
-end
-
-function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::Tuple) where {TF,NT}
-    vals = NamedTuple{NT.parameters[1]}(θ)
-    m.paravals[] = vals
-    return vals
-end
-
-function _update_paravals!(m::AbstractEstimator{TF,NT}, θ::NT) where {TF,NT}
-    m.paravals[] = θ
-    return θ
-end
 
 function _fill_shocks!(bm::BayesianModel{TF,NT,PR,SH}) where {TF,NT,PR,SH}
     if @generated
@@ -316,7 +376,7 @@ end
 function loglikelihood!(bm::BayesianModel{TF,NT,PR,SH,N1,N2,0}, θ) where {TF,NT,PR,SH,N1,N2}
     GZ = bm.GZ
     nsh = nshock(bm)
-    paravals = _update_paravals!(bm, θ)
+    paravals = _update_paravals!(bm.paravals, θ)
     _fill_shocks!(bm)
     @inbounds for k in 1:nsh
         GZk = selectdim(GZ,3,k)
@@ -331,28 +391,22 @@ function loglikelihood!(bm::BayesianModel{TF,NT,PR,SH,N1,N2,0}, θ) where {TF,NT
 end
 
 function loglikelihood!(bm::BayesianModel, θ)
-    tjac = bm.gs.gj.tjac
-    nT = bm.nT
-    GZ = bm.GZ
     nsh = nshock(bm)
-    paravals = _update_paravals!(bm, θ)
+    paravals = _update_paravals!(bm.paravals, θ)
     _fill_shocks!(bm)
-    varvalskeys = typeof(tjac).parameters[2].parameters[1]
-    tjac.varvals[] = varvals = NamedTuple{varvalskeys}(merge(tjac.varvals[], paravals))
-    bm.plan(varvals)
-    bm.gs()
-    _fillG!(_reshape(GZ, size(GZ,1)*size(GZ,2), 1, nsh), bm.gs, bm.exovars, bm.observables, nT)
+    # Update impulse responses
+    bm.impulseupdate(paravals) # Structural parameters in tjac are updated
     for i in 1:nsh
         @inbounds bm.SE[i] = paravals[i]
     end
-    r = allcov!(bm.allcovcache, GZ, bm.SE)
+    r = allcov!(bm.allcovcache, bm.GZ, bm.SE)
     _fill_allcov!(bm.V, r, bm.merror)
     return loglikelihood!(bm.V, bm.Y, bm.Ycache)
 end
 
 # This method is not used by logposterior!
 loglikelihood!(bm::TransformedBayesianModel, θ) =
-    transform_logdensity(bm.transformation, Base.Fix1(loglikelihood!, parent(bm)), θ)
+    transform_logdensity(bm.transformation, Fix1(loglikelihood!, parent(bm)), θ)
 
 logposterior!(bm::BayesianModel, θ) = loglikelihood!(bm, θ) + logprior(bm, θ)
 # Does not add the log Jacobian determinant
@@ -412,7 +466,7 @@ function logdensity_and_gradient(bm::TransformedBayesianModel, θ)
     p = parent(bm)
     grad = parent(bm).dl
     dimension(bm) == length(grad) || resize!(grad, dimension(bm))
-    f = Base.Fix1(logdensity, bm)
+    f = Fix1(logdensity, bm)
     ca = p.dlcache
     dimension(bm) <= length(ca.c3) || _resize_fdcache!(ca, dimension(bm))
     ca = _update_fdcache(ca, l)
@@ -433,7 +487,7 @@ function logdensity_hessian!(bm::BayesOrTrans, θ, h::AbstractMatrix)
     dimension(bm) <= length(ca.xpp) || _resize_fdcache!(ca, dimension(bm))
     _update_fdcache!(ca, θ)
     # Share fdkwargs with gradient for simplicity but their keywords are not identical
-    f = Base.Fix1(logdensity, bm)
+    f = Fix1(logdensity, bm)
     finite_difference_hessian!(h, f, θ, ca; p.fdkwargs...)
     return h
 end

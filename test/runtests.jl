@@ -17,9 +17,10 @@ using LoopVectorization
 using MCMCChains
 using NLopt
 using NLsolve
+using NonlinearSystems
 using Random
 using Roots: Brent, Secant
-using SequenceJacobians: ArrayToArgs, ar1impulse!
+using SequenceJacobians: ArrayToArgs, ar1impulse!, _solve!, _reshape
 using StructArrays
 using TransformVariables: as, asℝ₊, as𝕀
 
@@ -35,6 +36,17 @@ exampledata(name::Union{Symbol,String}) =
 function loadjson(name::Union{Symbol,String})
     stream = open(pkgdir(SequenceJacobians)*"/data/$name.json.gz") |> GzipDecompressorStream
     return copy(JSON3.read(read(stream, String)))
+end
+
+struct ImpulseResidual{U<:ImpulseUpdate, V<:AbstractVector}
+    u::U
+    tars::V
+end
+
+function (r::ImpulseResidual)(resids::AbstractVector, θ)
+    r.u(θ)
+    resids .= _reshape(r.u.vals, length(r.u.vals)) .- r.tars
+    return resids
 end
 
 const tests = [

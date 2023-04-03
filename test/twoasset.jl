@@ -118,7 +118,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         inits = [:β=>0.976, :χ1=>6.5]
         tars = [:asset_mkt=>0, :B=>1.04]
         ss = SteadyState(mss, calis, inits, tars)
-        @time solve!(GSL_Hybrids, ss, xtol=1e-10)
+        @time solve(Hybrid, ss, ss.inits, xtol=1e-8)
         # Compare results with original Python package
         @test ss[:A] ≈ 12.96 atol=1e-5
         @test ss[:B] ≈ 1.04 atol=1e-6
@@ -272,7 +272,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         gs2 = GMaps(gj2, endos)
         bm2 = bayesian(gs2, shocks, obs, priors2, data)
         # Verify that shared ins are really shared
-        for (ii, ms) in bm2.plan.mmaps
+        for (ii, ms) in bm2.impulseupdate.plan.mmaps
             for j in 2:length(ms)
                 for i in 1:length(ms[j].ins)
                     @test ms[j].ins[i] === ms[1].ins[i]

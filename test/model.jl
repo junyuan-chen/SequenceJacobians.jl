@@ -51,11 +51,9 @@ end
         @test arraytargets(ss) == ()
         @test ss[] == ss.varvals[]
 
-        f(x) = criterion!(ss, x)
-        f!(y,x) = residuals!(y, ss, x)
-        r = solve!(GSL_Hybrids, f!, ss.inits, xtol=1e-10)
+        r = solve(Hybrid, ss, ss.inits, ftol=1e-10)
         # Compare results with original Python package
-        @test r[1] ≈ [0.9900990099009883, 0.9658914728682162, 0.8816460975214576,
+        @test r.x ≈ [0.9900990099009883, 0.9658914728682162, 0.8816460975214576,
             3.1428571428570864] atol=1e-8
         @test ss[:φ] ≈ 0.9658914728682162 atol=1e-8
         @test ss[:β] ≈ 0.9900990099009883 atol=1e-8
@@ -73,7 +71,7 @@ end
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
         ss = SteadyState(m, calis, inits, tars)
         @test targets(ss) == (:Y, :r, :asset_mkt)
-        solve!(GSL_Hybrids, ss, xtol=1e-10)
+        _solve!(Hybrid, ss, xtol=1e-10)
         # Compare results with original Python package
         @test ss[:β] ≈ 0.981952788061795 atol=1e-8
         @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8
@@ -92,7 +90,7 @@ end
             m = model(ksblocks())
             bhh = m.pool[1]
             ss = SteadyState(m, calis, inits, tars)
-            solve!(GSL_Hybrids, ss, xtol=1e-10)
+            solve(Hybrid, ss, ss.inits, ftol=1e-10)
             # Compare results with original Python package
             @test ss[:β] ≈ 0.981952788061795 atol=1e-8
             @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8
@@ -103,7 +101,7 @@ end
             bhh = m.pool[1]
             bhh.ssargs[:mforward] = 10
             ss = SteadyState(m, calis, inits, tars)
-            solve!(GSL_Hybrids, ss, xtol=1e-10)
+            solve(Hybrid, ss, ss.inits, ftol=1e-10)
             # Compare results with original Python package
             @test ss[:β] ≈ 0.981952788061795 atol=1e-8
             @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8

@@ -5,7 +5,7 @@
     tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
     inits = [:β=>0.98, :Z=>0.85, :K=>3]
     ss =  SteadyState(m, calis, inits, tars)
-    solve!(GSL_Hybrids, ss, xtol=1e-10)
+    solve(Hybrid, ss, ss.inits, ftol=1e-10)
     J = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
     gj = GEJacobian(J, :Z)
     gs = GMaps(gj)

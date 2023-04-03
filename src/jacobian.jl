@@ -36,11 +36,11 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets, varvals::NamedTu
     pool = copy(sources)
     edges = Edge{Int}[]
     if dZs === nothing
-        ncol = fill(nT, length(sources))
+        ncol = map(n->length(varvals[n]) * nT, sources)
     else
         dZs = Dict{Symbol, Matrix{TF}}(
             k=>reshape(collect(TF, v), size(v,1), size(v,2)) for (k, v) in dZs)
-        ncol = [haskey(dZs, n) ? size(dZs[n], 2) : nT for n in sources]
+        ncol = [haskey(dZs, n) ? size(dZs[n], 2) : length(varvals[n]) * nT for n in sources]
     end
     excluded === nothing || (excluded = Set{BlockOrVar}(excluded))
     lookupblk = Dict{AbstractBlock, Int}()
@@ -187,13 +187,13 @@ end
 
 function _fill_jac!(out, ishift, totals, vars, varwidths, tars, tarwidths, nT, ncol, TF)
     for j in axes(out, 2)
-        nC = ncol === nothing ? nT : ncol[j]
+        nC = ncol === nothing ? nT*varwidths[j] : ncol[j]
         v = vars[j]
         for i in axes(out, 1)
             vtar = tars[i]
             jac = get(totals[v], vtar, nothing)
             if jac === nothing
-                out[i,j] = Zeros{TF}(nT*tarwidths[i], nC*varwidths[j])
+                out[i,j] = Zeros{TF}(nT*tarwidths[i], nC)
             elseif jac isa MatrixMap
                 out[i,j] = jac.out
             else
@@ -213,6 +213,7 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
     exovars isa Symbol && (exovars = (exovars,))
     isempty(exovars) && throw(ArgumentError("exovars cannot be empty"))
     exovars = collect(Symbol, exovars)
+    vals = tjac.varvals[]
     nZcol = Int[]
     for var in exovars
         i = findfirst(==(var), tjac.srcs)
@@ -222,7 +223,7 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
     if endosrcs === nothing
         iendo = findall(!in(exovars), tjac.srcs)
         for i in iendo
-            tjac.ncol[i] == nT || throw(ArgumentError(
+            tjac.ncol[i] == nT*length(vals[tjac.srcs[i]]) || throw(ArgumentError(
                 "Jacobians for endogenous source $(tjac.srcs[i]) must be square; check the dZs option with TotalJacobian"))
         end
         endosrcs = tjac.srcs[iendo]
@@ -231,11 +232,10 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
             i = findfirst(==(var), tjac.srcs)
             i === nothing && throw(ArgumentError("$var is not a source variable"))
             var in exovars && throw(ArgumentError("$var is exogenous"))
-            tjac.ncol[i] == nT || throw(ArgumentError(
+            tjac.ncol[i] == nT*length(vals[tjac.srcs[i]]) || throw(ArgumentError(
                 "Jacobians for endogenous source $(tjac.srcs[i]) must be square; check the dZs option with TotalJacobian"))
         end
     end
-    vals = tjac.varvals[]
     ntar = length(tars)
     nendo = length(endosrcs)
     nexo = length(exovars)
@@ -259,7 +259,7 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
     G_U = similar(H_Z)
     ldiv!(G_U, H_Ulu, H_Z)
     rmul!(G_U, -one(eltype(G_U)))
-    G_U = PseudoBlockMatrix(G_U, nT*endowidths, nZcol.*exowidths)
+    G_U = PseudoBlockMatrix(G_U, nT*endowidths, nZcol)
     return GEJacobian(tjac, exovars, endosrcs, H_Z, H_Zblks, iH_Zshift, ws, H_U,
         H_Ublks, iH_Ushift, G_U, nTfull, nZcol)
 end
@@ -568,21 +568,28 @@ end
     return g
 end
 
-@inline (g::GMaps)(out::AbstractVecOrMat, exo::Symbol, endo::Symbol) =
-    mul!(out, g[exo, endo], true)
+@inline function (g::GMaps)(out::AbstractVecOrMat, exo::Symbol, endo::Symbol)
+    varvals = g.gj.tjac.varvals[]
+    i, j = g.inds[exo][endo]
+    if i === 0
+        return mul!(out, g.G_Umaps[j], true; mb=length(varvals[endo]), nb=length(varvals[exo]))
+    elseif i === 1
+        return mul!(out, g.smaps[j], true)
+    else
+        return mul!(out, g.mmaps[i-1][j], true;
+            mb=length(varvals[endo]), nb=length(varvals[exo]))
+    end
+end
 
 @inline function (g::GMaps)(exo::Symbol, endo::Symbol)
     nT = g.gj.nTfull
     i, j = g.inds[exo][endo]
     if i === 0
-        M = copy(g.G_Umaps[j].out)
-        return size(M) === (nT, nT) ? M : _block2(M, nT)
+        return copy(g.G_Umaps[j].out)
     elseif i === 1
-        M = g.smaps[j](nT)
-        return size(M) === (nT, nT) ? M : _block2(M, nT)
+        return g.smaps[j](nT)
     else
-        M = copy(g.mmaps[i-1][j].out)
-        return size(M) === (nT, nT) ? M : _block2(M, nT)
+        return copy(g.mmaps[i-1][j].out)
     end
 end
 

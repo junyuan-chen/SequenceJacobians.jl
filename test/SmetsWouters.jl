@@ -140,16 +140,21 @@
     vobs = [:y, :I, :c, :i, :n, :w]
     vars = [:εi=>vobs]
     nobs = length(vobs)
-    irfs = PseudoBlockVector(Vector{Float64}(undef, 16*nobs), fill(16, nobs))
-    tarvals = similar(irfs)
+    # Use actual irfs under original parameters as targets
+    tarvals = PseudoBlockVector(Vector{Float64}(undef, 16*nobs), fill(16, nobs))
     for (i, n) in enumerate(vobs)
         gs1(view(tarvals, Block(i)), :εi, n)
     end
-    md = MinimumDistance(gs1, :ρ, vars, irfs, tarvals.blocks, ones(length(tarvals)))
-    @test md[] == (ρ=0.875,)
-    params, counter, r = solve!(md, :LD_LBFGS, [0.6], lower_bounds=0.5, upper_bounds=0.9)
-    @test params.ρ ≈ 0.875 atol=1e-7
-    @test vcov(md)[1] ≈ 0.00012397999374007937 atol=1e-9
+    u = ImpulseUpdate(gs1, :ρ, :εi, vobs, 16)
+    function md(resids, θ)
+        u(θ)
+        resids .= _reshape(u.vals, length(u.vals)) .- tarvals.blocks
+    end
+    @test u[] == (ρ=0.875,)
+    fdf = OnceDifferentiable(md, [0.6], zeros(length(tarvals)))
+    r = solve(Hybrid{LeastSquares}, fdf, [0.6])
+    @test u[:ρ] == r.x[1]
+    @test u[:ρ] ≈ 0.875 atol=1e-7
 
     εa = zeros(T, 1)
     εi[1] = 1
@@ -157,8 +162,7 @@
     gj2 = GEJacobian(j2, (:εa, :εi), endos)
     gs2 = GMaps(gj2)
     vars = [:εa=>vobs, :εi=>vobs]
-    irfs = PseudoBlockVector(Vector{Float64}(undef, 32*nobs), fill(16, 2*nobs))
-    tarvals = similar(irfs)
+    tarvals = PseudoBlockVector(Vector{Float64}(undef, 32*nobs), fill(16, 2*nobs))
     i = 1
     for (exo, vobs) in vars
         for n in vobs
@@ -166,20 +170,20 @@
             i += 1
         end
     end
-    md2 = MinimumDistance(gs2, (:α, :ρ), vars, irfs, tarvals.blocks, ones(length(tarvals)))
-    params, counter, r = solve!(md2, :LD_LBFGS, [0.4, 0.6],
-        lower_bounds=[0.1, 0.5], upper_bounds=[0.5, 0.9])
-    @test md2[:α] ≈ 0.197 atol=1e-6
-    @test md2[:ρ] ≈ 0.875 atol=1e-6
-    @test vcov(md2) ≈ [0.116598 -0.00275197; -0.00275197 0.000188933] atol=1e-5
-    @test stderror(md2) ≈ [0.34146400081235834, 0.013745288936911307] atol=1e-7
+    u2 = ImpulseUpdate(gs2, (:α, :ρ), (:εa, :εi), vobs, 16)
+    md2 = ImpulseResidual(u2, tarvals.blocks)
+    @test u2[] == (α=0.197, ρ=0.875)
+    fdf = OnceDifferentiable(md2, zeros(2), zeros(length(tarvals)))
+    r1 = solve(Hybrid{LeastSquares}, fdf, [0.4, 0.6], thres_jac=1)
+    @test u2[:α] ≈ 0.197 atol=1e-6
+    @test u2[:ρ] ≈ 0.875 atol=1e-6
 
-    @test sprint(show, md) == "96×1 MinimumDistance{Float64}(1)"
-    @test sprint(show, MIME("text/plain"), md) == """
-        96×1 MinimumDistance{Float64} with 1 exogenous variable:
+    @test sprint(show, u) == "96×1 ImpulseUpdate{Float64}(1)"
+    @test sprint(show, MIME("text/plain"), u) == """
+        96×1 ImpulseUpdate{Float64} with 1 exogenous variable:
           parameter: ρ"""
-    @test sprint(show, md2) == "192×2 MinimumDistance{Float64}(2)"
-    @test sprint(show, MIME("text/plain"), md2) == """
-        192×2 MinimumDistance{Float64} with 2 exogenous variables:
+    @test sprint(show, u2) == "192×2 ImpulseUpdate{Float64}(2)"
+    @test sprint(show, MIME("text/plain"), u2) == """
+        192×2 ImpulseUpdate{Float64} with 2 exogenous variables:
           parameters: α, ρ"""
 end
