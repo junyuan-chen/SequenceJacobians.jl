@@ -4,10 +4,9 @@
     p = hv.HorvathPlanner(vlw)
     N = length(p.C)
     T = 60
-    mss = model([hv.ss_blk()])
     @testset "hwelast=-1" begin
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1)
-        ss = SteadyState(mss, calis)
+        ss = hv.ss((p=p, β=0.96, eis=1, frisch=0, hwelast=-1)..., Hybrid)
         @test log(ss[:Ctot]) ≈ -9.179427352597520 atol=1e-8
         @test log(sum(p.L)) ≈ -0.245118891298135 atol=1e-8
         @test log(p.C[2]) ≈ -10.629366617908783 atol=1e-8
@@ -21,8 +20,9 @@
         @test log(p.VA[2]) ≈ -7.758900353404101 atol=1e-8
         @test log(p.Z[3]) ≈ -8.703794453549149 atol=1e-8
 
-        m = hv.Horvathmodel(p, calis)
-        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N), sA=1.0))
+        m = hv.Horvathmodel(p, calis, Hybrid)
+        vals = merge(ss, (goods_mkt=zeros(N), euler=zeros(N), sA1=1.0, sA2=ones(N)))
+        vals = merge(vals, calis)
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
         gs = GMaps(gj, gj.endosrcs)
@@ -45,7 +45,7 @@
     if !Sys.iswindows() # Skip GitHub CI on Windows due to OutOfMemoryError
     @testset "hwelast=-1.04" begin
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1.04)
-        ss = SteadyState(mss, calis)
+        ss = hv.ss((p=p, β=0.96, eis=1, frisch=0, hwelast=-1.04)..., Hybrid)
         # Compare results from Dynare
         @test log(ss[:Ctot]) ≈ -9.121497724560054 atol=1e-8
         @test log(sum(p.L)) ≈ -0.245118891298135 atol=1e-8
@@ -60,8 +60,9 @@
         @test log(p.VA[1]) ≈ -7.443153329291874 atol=1e-8
         @test log(p.Z[1]) ≈ -11.992266967437140 atol=1e-8
 
-        m = hv.Horvathmodel(p, calis)
-        vals = merge(ss[], (goods_mkt=zeros(N), euler=zeros(N), sA=1.0))
+        m = hv.Horvathmodel(p, calis, Hybrid)
+        vals = merge(ss, (goods_mkt=zeros(N), euler=zeros(N), sA1=1.0, sA2=ones(N)))
+        vals = merge(vals, calis)
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
         gs = GMaps(gj)
@@ -139,12 +140,27 @@
         for s in 1:N
             tarvals[Block(s)] .= view(view(tarblk, Block(s)), 1:16)
         end
-        u1 = ImpulseUpdate(gs1, :sA, :A, :Y, 16)
+        u1 = ImpulseUpdate(gs1, :sA1, :A, :Y, 16)
         md = ImpulseResidual(u1, tarvals)
-        @test u1[] == (sA=1.0,)
+        @test u1[] == (sA1=1.0,)
         fdf = OnceDifferentiable(md, zeros(1), zeros(length(tarvals)))
         r1 = solve(Hybrid{LeastSquares}, fdf, [1.1], showtrace=1)
         @test Symbol(getexitstate(r1)) == :ftol_reached
+
+        # Create artificial data just for testing
+        df = DataFrame([Symbol(:Y,i)=>0.9.^(1:30) for i in 1:N])
+        cols = [Symbol(:Y,i) for i in 1:N]
+        sh = ar1shock(:σA, :ρA, :A)
+        pr = [:σA => StructArray(InverseGamma.(fill(2.0,N), fill(0.1,N))),
+            :ρA => StructArray{Beta{Float64}}((p.ρA, 1.0.-p.ρA))]
+        bm = bayesian(gs, sh, :Y=>cols, pr, df; nTtrim=5)
+        @test logposterior!(bm, bm[]) ≈ -2.3742774705342596e11 atol=1e5
+        @test length(bm.Z) == 1
+        @test length(bm.Z[1]) == (T-5)*N
+        @test length(bm.SE) == N
+        bm0 = bayesian(gs, sh, :Y=>cols, pr, df; nTtrim=0)
+        logposterior!(bm0, bm0[])
+        @test bm0.GZ ≈ 100 .* irf[:A][:Y]
     end
     end
 end

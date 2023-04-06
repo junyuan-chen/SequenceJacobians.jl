@@ -6,6 +6,7 @@ using BlockArrays: BlockMatrix, PseudoBlockMatrix, PseudoBlockVector, Block,
     BlockedUnitRange, mortar, blocksize, blocksizes, _BlockedUnitRange,
     MemoryLayout, _copyto!
 using CommonSolve: solve
+using ComponentArrays: Axis, ComponentArray, ComponentVector
 using Distributions: Distribution, logpdf
 using FFTW: Plan, plan_rfft, plan_irfft, rfft, irfft
 using FastLapackInterface: LUWs
@@ -42,7 +43,7 @@ import TransformVariables: transform
 
 # Reexport
 export ARMAProcess, simulate!, simulate, impulse!, impulse
-export solve!
+export solve!, solve
 export SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed, has_vertex, has_edge,
     inneighbors, outneighbors
 export dimension
@@ -72,6 +73,16 @@ export supconverged,
        isrootsolver,
        isrootsolvercache,
        rootsolvercache,
+       backwardsolvercache,
+       forwardsolvercache,
+       Roots_Default,
+       NLsolve_newton,
+       NLsolve_trust_region,
+       NLsolve_anderson,
+       NLsolve_broyden,
+       NLsolve_Solver,
+       BroydenCache,
+       NLsolve_Cache,
 
        VarSpec,
        varspec,
@@ -117,6 +128,7 @@ export supconverged,
        backwardsolver,
        backward!,
        backward_endo!,
+       backward_exog!,
        backward_steadystate!,
        backward_init!,
        backward_status,
@@ -213,7 +225,7 @@ export supconverged,
 include("utils.jl")
 include("shift.jl")
 include("jacmap.jl")
-include("solvers/interface.jl")
+include("solverinterface.jl")
 include("block.jl")
 include("hetagent.jl")
 include("lawofmotion.jl")
@@ -233,31 +245,20 @@ include("examples/twoasset.jl")
 include("examples/Horvath.jl")
 include("examples/SmetsWouters.jl")
 
-function __init__()
-    @require GSL = "92c85e6c-cbff-5e0c-80f7-495c94daaecd" begin
-        if VERSION >= v"1.7"
-            if !(@isdefined OpenBLAS32_jll)
-                @info "Need to use OpenBLAS32_jll for GSL"
-            end
-            @require OpenBLAS32_jll = "656ef2d0-ae68-5445-9ca0-591084a874a2" begin
-                BLAS.lbt_forward(OpenBLAS32_jll.libopenblas_path)
-            end
+@static if !isdefined(Base, :get_extension)
+    function __init__()
+        @require NLopt = "76087f3c-5699-56af-9a33-bf431cd00edd" begin
+            include("../ext/SeqJacNLoptExt.jl")
         end
-        include("solvers/gsl.jl")
-    end
-    @require NLopt = "76087f3c-5699-56af-9a33-bf431cd00edd" begin
-        include("solvers/nlopt.jl")
-    end
-    @require NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56" begin
-        include("solvers/nlsolve.jl")
-        include("solvers/anderson.jl")
-    end
-    @require Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665" begin
-        include("solvers/roots.jl")
-    end
-    @static if !isdefined(Base, :get_extension)
+        @require NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56" begin
+            export splitdimsview
+            include("../ext/SeqJacNLsolveExt.jl")
+        end
         @require NonlinearSystems = "deb0877a-d74a-4aeb-b6ac-c17f6fb4122e" begin
             include("../ext/SeqJacNonlinearSystemsExt.jl")
+        end
+        @require Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665" begin
+            include("../ext/SeqJacRootsExt.jl")
         end
     end
 end

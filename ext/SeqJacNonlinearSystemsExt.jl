@@ -12,6 +12,7 @@ const NS = NonlinearSystems
 const SJ = SequenceJacobians
 
 SJ.isvectorrootsolver(::Type{<:NS.AbstractAlgorithm}) = true
+SJ.isvectorrootsolver(::Type{NS.Hybrid}) = true
 SJ.isvectorrootsolver(::NS.AbstractAlgorithm) = true
 
 SJ.root(s::NS.NonlinearSystem) = s.x

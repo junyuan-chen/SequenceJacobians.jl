@@ -341,12 +341,12 @@ end
     return inv, val
 end
 
-function production_blk()
+function production_blk(solver)
     calis = [:Y=>1, :w=>0.6, :Z=>0.4677898145312322, :α=>0.3299492385786802,
         :r=>0.0125, :δ=>0.02, :εI=>4, :εr=>0]
     return block([labor_blk(), investment_blk()],
         [:Y, :w, :Z, :α, :r, :δ, :εI, :εr], [:Q, :K, :N, :mc],
-        calis, [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
+        calis, [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=solver)
 end
 
 @simple function dividend(Y, w, N, K, pip, mup, κp, δ, εI)
@@ -421,9 +421,9 @@ function twoassetmodelss()
     return m
 end
 
-function twoassetmodel()
+function twoassetmodel(solver)
     bhh = twoassethhblock(4000, 50, 1, 70, 50, 3, 50, 0.966, 0.92)
-    m = model([bhh, income_blk(), production_blk(), pricing_blk(), arbitrage_blk(),
+    m = model([bhh, income_blk(), production_blk(solver), pricing_blk(), arbitrage_blk(),
         dividend_blk(), taylor_blk(), fiscal_blk(), share_value_blk(), finance_blk(),
         wage_blk(), union_blk(), mkt_clearing_blk()])
     return m

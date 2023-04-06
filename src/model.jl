@@ -354,14 +354,20 @@ residuals!(ss::SteadyState, inputs::AbstractVector) = residuals!(ss.resids, ss, 
 (ss::SteadyState)(resids::AbstractVector, inputs::AbstractVector) =
     residuals!(resids, ss, inputs)
 
+# When there is only one equation involved
+(ss::SteadyState)(input::Number) =
+    (ss.inits[1] = input; residuals!(ss); ss.resids[1])
+
 # Should only be used internally (eg., by CombinedBlock)
 function _solve!(ST::Type, ss::SteadyState, x0=ss.inits; keepinits::Bool=false, kwargs...)
-    r = solve(ST, ss, x0; kwargs...)
+    r = isrootsolver(ST) ? solve(ST, ss, x0; kwargs...) : solve!(ST, x0; kwargs...)
     # Results returned by the solver may be the guess for the next iteration
     keepinits || copyto!(ss.inits, root(r))
-    return ss[]
+    return ss[], r, rootisfound(r)
 end
 
+#! To do: Model without equilibrium conditions?
+#=
 function _solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
         kwargs...) where {TF,NT,BLK}
     # Update the values without solving for any target
@@ -380,6 +386,7 @@ function _solve!(ST::Type{NoRootSolver}, ss::SteadyState{TF,NT,BLK};
         return varvals
     end
 end
+=#
 
 show(io::IO, ss::SteadyState{TF}) where TF =
     print(io, inlength(ss), '×', tarlength(ss), " SteadyState{$TF}")

@@ -145,6 +145,7 @@ end
 inlength(j::TotalJacobian) = length(j.srcs)
 tarlength(j::TotalJacobian) = length(j.tars)
 
+getindex(j::TotalJacobian) = j.varvals[]
 getindex(j::TotalJacobian, src::Symbol) = j.totals[src]
 getindex(j::TotalJacobian, src::Symbol, dest::Symbol) = j.totals[src][dest]
 

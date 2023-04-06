@@ -1,9 +1,9 @@
-struct ImpulseUpdate{TF, NT, G<:GMaps{TF}, P<:GEJacobianUpdatePlan}
+struct ImpulseUpdate{TF, NT, A<:Axis, G<:GMaps{TF}, P<:GEJacobianUpdatePlan}
     gs::G
     paravals::RefValue{NT}
+    paraaxis::A
     exovars::Vector{Pair{Symbol,Int}}
     endovars::Vector{Pair{Symbol,Int}}
-    npara::Int
     nT::Int
     plan::P
     jacmaps::Vector{AbstractJacobianMap{TF}}
@@ -35,7 +35,7 @@ function ImpulseUpdate(gs::GMaps{TF}, params, exovars, endovars, nT::Int;
     params = ntuple(i->params[i], length(params))
     nT > gj.nTfull && throw(ArgumentError("nT cannot be greater than $(gj.nTfull)"))
     paravals = NamedTuple{params}(gj.tjac.varvals[])
-    npara = _getvarlength(params, paravals)
+    paraaxis = getfield(ComponentVector(paravals), :axes)[1]
     p = plan(gj, params; dZvars=dZvars)
     jacmaps = Vector{AbstractJacobianMap{TF}}(undef, length(exovars)*length(endovars))
     varvals = gj.tjac.varvals[]
@@ -60,13 +60,13 @@ function ImpulseUpdate(gs::GMaps{TF}, params, exovars, endovars, nT::Int;
         end
     end
     vals = Array{TF,3}(undef, nT, wendo, wexo)
-    return ImpulseUpdate(gs, Ref(paravals), exos, endos, npara, nT, p, jacmaps, vals)
+    return ImpulseUpdate(gs, Ref(paravals), paraaxis, exos, endos, nT, p, jacmaps, vals)
 end
 
-function _update_paravals!(refvals::RefValue{NT}, θ::AbstractVector) where NT
+function _unsafe_update_paravals!(refvals::RefValue{NamedTuple{names, T}},
+        θ::Union{Tuple, ComponentVector}, axis=nothing) where {names, T}
     if @generated
-        names = NT.parameters[1]
-        eltypes = NT.parameters[2].parameters
+        eltypes = T.parameters
         N = length(names)
         ex = :(())
         excopys = :(vals0 = refvals[])
@@ -74,19 +74,15 @@ function _update_paravals!(refvals::RefValue{NT}, θ::AbstractVector) where NT
             if eltypes[i] <: Number
                 push!(ex.args, :(θ[$i]))
             else
-                excopys = quote
-                    $excopys
-                    dest = vals0[$i]
-                    copyto!(dest, view(θ, $i:$i+length(dest)-1))
-                end
+                n = typeof(θ) <: ComponentVector ? names[i] : i
+                excopys = :($excopys; copyto!(vals0[$i], θ[$n]))
                 push!(ex.args, :(vals0[$i]))
             end
         end
         ex = :($excopys; vals = NamedTuple{$names}($ex); refvals[] = vals)
         return ex
     else
-        names = NT.parameters[1]
-        eltypes = NT.parameters[2].parameters
+        eltypes = T.parameters
         vals0 = refvals[]
         vs = ()
         for i in 1:length(names)
@@ -94,7 +90,7 @@ function _update_paravals!(refvals::RefValue{NT}, θ::AbstractVector) where NT
                 vs = (vs..., θ[i])
             else
                 dest = vals0[i]
-                copyto!(dest, view(θ, i:i+length(dest)-1))
+                copyto!(dest, θ isa ComponentVector ? θ[names[i]] : θ[i])
                 vs = (vs..., dest)
             end
         end
@@ -104,25 +100,23 @@ function _update_paravals!(refvals::RefValue{NT}, θ::AbstractVector) where NT
     end
 end
 
-function _update_paravals!(refvals::RefValue{NT}, θ::Tuple) where NT
-    vals = NamedTuple{NT.parameters[1]}(θ)
-    refvals[] = vals
-    return vals
-end
+@inline _update_paravals!(refvals::RefValue{NT}, θ::AbstractVector, axis::Axis) where NT =
+    _unsafe_update_paravals!(refvals, ComponentArray(θ, (axis,)))
 
-function _update_paravals!(refvals::RefValue{NT}, θ::NT) where NT
-    refvals[] = θ
-    return θ
-end
+@inline _update_paravals!(refvals::RefValue{NT}, θ::NT, axis=nothing) where NT =
+    _unsafe_update_paravals!(refvals, (θ...,))
 
-function _update_paravals!(refvals::RefValue{NT}, θ::NamedTuple) where NT
-    θ1 = NamedTuple{NT.parameters[1]}(θ)
-    refvals[] = θ1
-    return θ1
+@inline _update_paravals!(refvals::RefValue{NT}, θ::NamedTuple, axis=nothing) where NT =
+    _unsafe_update_paravals!(refvals, (NamedTuple{NT.parameters[1]}(θ)...,))
+
+@inline function _update_paravals!(refvals::RefValue{NT}, θ::Tuple, axis=nothing) where NT
+    length(NT.parameters[1]) == length(θ) ||
+        throw(DimensionMismatch("length of refvals must match length of θ"))
+    return _unsafe_update_paravals!(refvals, θ)
 end
 
 @inline function (u::ImpulseUpdate)(θ)
-    paravals = _update_paravals!(u.paravals, θ)
+    paravals = _update_paravals!(u.paravals, θ, u.paraaxis)
     tjac = u.gs.gj.tjac
     tjac.varvals[] = varvals = merge(tjac.varvals[], paravals)
     u.plan(varvals)
@@ -135,14 +129,14 @@ end
 @inline getindex(u::ImpulseUpdate, i) = getindex(u[], i)
 
 show(io::IO, u::ImpulseUpdate{TF}) where TF = print(io, length(u.vals),
-    '×', u.npara, " ImpulseUpdate{", TF, "}(", length(u.exovars), ')')
+    '×', lastindex(u.paraaxis), " ImpulseUpdate{", TF, "}(", length(u.exovars), ')')
 
 function show(io::IO, ::MIME"text/plain", u::ImpulseUpdate{TF,NT}) where {TF,NT}
     nexo = length(u.exovars)
-    print(io, length(u.vals), '×', u.npara, " ImpulseUpdate{", TF, "} with ")
+    print(io, length(u.vals), '×', lastindex(u.paraaxis), " ImpulseUpdate{", TF, "} with ")
     println(io, nexo, " exogenous variable", nexo > 1 ? "s:" : ':')
     print(io, "  parameter")
-    u.npara > 1 && print(io, 's')
+    lastindex(u.paraaxis) > 1 && print(io, 's')
     print(io, ": ")
     join(io, NT.parameters[1], ", ")
 end

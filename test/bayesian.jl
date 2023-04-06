@@ -7,7 +7,7 @@
     tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
     inits = [:β=>0.98, :Z=>0.85, :K=>3]
     ss = SteadyState(m, calis, inits, tars)
-    solve(Hybrid, ss, ss.inits, ftol=1e-10)
+    solve(Hybrid, ss, ss.inits, xtol=1e-9)
     j = TotalJacobian(m, [:Z,:K], [:asset_mkt], ss[], 300, excluded=(:goods_mkt,))
     gs = GMaps(GEJacobian(j, :Z))
     shock, priors = kspriors()

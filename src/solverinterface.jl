@@ -60,3 +60,29 @@ function root end
 Determine whether the solver has found the solution successfully.
 """
 function rootisfound end
+
+function backwardsolvercache end
+function forwardsolvercache end
+
+"""
+    Roots_Default
+
+Default solver determined by Roots.jl.
+"""
+struct Roots_Default end
+
+abstract type AbstractNLsolveSolver end
+
+struct NLsolve_newton <: AbstractNLsolveSolver end
+struct NLsolve_trust_region <: AbstractNLsolveSolver end
+struct NLsolve_anderson <: AbstractNLsolveSolver end
+struct NLsolve_broyden <: AbstractNLsolveSolver end
+struct NLsolve_Solver <: AbstractNLsolveSolver end
+
+# Placeholder for Broyden method that does not require cache
+struct BroydenCache end
+
+struct NLsolve_Cache{CA, DF}
+    ca::CA
+    df::DF
+end

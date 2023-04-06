@@ -3,7 +3,7 @@ abstract type AbstractEstimator{TF<:AbstractFloat, NT<:NamedTuple} end
 struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3,
         U<:Union{ImpulseUpdate, Nothing},
         GJ<:GEJacobian{TF}, TC<:AbstractAllCovCache, TE<:Union{AbstractVector{TF},Nothing},
-        GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple} <: AbstractEstimator{TF, NT}
+        GC<:GradientCache, HC<:HessianCache, FDA<:NamedTuple, A<:Axis} <: AbstractEstimator{TF, NT}
     shockses::NTuple{N1,Symbol}
     shockparas::NTuple{N2,Symbol}
     strucparas::NTuple{N3,Symbol}
@@ -13,6 +13,7 @@ struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3,
     observables::Vector{Pair}
     lookupobs::Dict{Symbol,Int}
     paravals::RefValue{NT}
+    paraaxis::A
     impulseupdate::U
     gs::GMaps{TF,GJ}
     shocks::SH
@@ -183,7 +184,7 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
         if p isa Distribution
             length(varvals[n]) == 1 || throw(ArgumentError(
                 "$v should match only one prior distribution"))
-        elseif p isa StructVector{<:Distribution}
+        elseif p isa StructArray{<:Distribution}
             length(p) == length(varvals[n]) || throw(ArgumentError(
                 "$v should match $(length(varvals[n])) prior distributions"))
         else
@@ -217,6 +218,8 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     strucparas = (strucparas...,)
     paras = (shockses..., shockparas..., strucparas...)
     paravals = NamedTuple{paras}(map(_mean, priors))
+    paraaxis = getfield(ComponentVector(paravals), :axes)[1]
+    npara = lastindex(paraaxis)
 
     observables isa Union{Symbol, Pair} && (observables = (observables,))
     obs, lookupobs = _check_observables(gj, observables)
@@ -247,14 +250,16 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
         _fillGfull!(G, gs, exos, endos)
         GZ = Array{TF,3}(undef, nT, wendo, wexo)
     else
+        # ! To do: Allow array parameters when estimation involves structural parameters
         u = ImpulseUpdate(gs, strucparas, exovars, map(Fix2(getindex, 1), observables), nT;
             dZvars=exovars)
         Z = [reshape(dZs[z], length(dZs[z])) for z in exovars]
         G = Array{TF,3}(undef, (0,0,0))
         GZ = u.vals
+        wexo = size(GZ, 3)
     end
-    SE = Vector{TF}(undef, nsh)
-    allcovcache = FFTWAllCovCache(nT, Nobs, nsh, TF; allcovcachekwargs...)
+    SE = Vector{TF}(undef, wexo)
+    allcovcache = FFTWAllCovCache(nT, Nobs, wexo, TF; allcovcachekwargs...)
     V = Matrix{TF}(undef, nY, nY)
     dl = Vector{TF}(undef, npara)
     dlcache = GradientCache{TF,Nothing,Nothing,Vector{TF},fdtype,TF,Val(true)}(
@@ -263,7 +268,7 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     d2lcache = HessianCache{Vector{TF},Val(:hcentral),Val(true)}(
         similar(dl), similar(dl), similar(dl), similar(dl))
     return BayesianModel(shockses, shockparas, strucparas, priors, lookuppara,
-        exovars, obs, lookupobs, Ref(paravals), u, gs, shocks, Z, G, GZ, SE,
+        exovars, obs, lookupobs, Ref(paravals), paraaxis, u, gs, shocks, Z, G, GZ, SE,
         allcovcache, V, measurement_error, Y, Ycache, nT, Tobs,
         dl, dlcache, d2l, d2lcache, fdkwargs)
 end
@@ -285,7 +290,7 @@ parent(bm::TransformedBayesianModel) = bm.log_density_function
 @inline getindex(bm::BayesOrTrans, i) = getindex(bm[], i)
 
 _logpdf(d::Distribution, θ::Number) = logpdf(d, θ)
-function _logpdf(ds::StructArray{<:Distribution}, θs::Number)
+function _logpdf(ds::AbstractArray, θs)
     s = zero(eltype(θs))
     @inbounds for i in eachindex(ds)
         s += logpdf(ds[i], θs[i])
@@ -293,12 +298,12 @@ function _logpdf(ds::StructArray{<:Distribution}, θs::Number)
     return s
 end
 
-function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,PR}
+function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractVector) where {TF,NT,PR}
     # The generated part avoids allocations for array θ
     if @generated
         ptypes = PR.parameters
         if ptypes[1] <: Distribution
-            ex = :(lp = _logpdf(bm.priors[1], θ[1]); i0 = 2)
+            ex = :(lp = logpdf(bm.priors[1], θ[1]); i0 = 2)
         else
             ex = quote
                 p1 = bm.priors[1]
@@ -310,7 +315,7 @@ function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,P
         if N > 1
             for i in 2:N
                 if ptypes[i] <: Distribution
-                    ex = :($ex; lp += _logpdf(bm.priors[$i], θ[i0]); i0 += 1)
+                    ex = :($ex; lp += logpdf(bm.priors[$i], θ[i0]); i0 += 1)
                 else
                     pp = Symbol(:p, i)
                     ex = quote
@@ -326,7 +331,7 @@ function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,P
     else
         ptypes = PR.parameters
         if ptypes[1] <: Distribution
-            lp = _logpdf(bm.priors[1], θ[1])
+            lp = logpdf(bm.priors[1], θ[1])
             i0 = 2
         else
             p1 = bm.priors[1]; lp = _logpdf(p1, view(θ, 1:length(p1)))
@@ -336,7 +341,7 @@ function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,P
         if N > 1
             for i in 2:N
                 if ptypes[i] <: Distribution
-                    lp += _logpdf(bm.priors[i], θ[i0])
+                    lp += logpdf(bm.priors[i], θ[i0])
                     i0 += 1
                 else
                     pp = bm.priors[i]
@@ -349,9 +354,22 @@ function logprior(bm::BayesianModel{TF,NT,PR}, θ::AbstractArray) where {TF,NT,P
     end
 end
 
-# Fallback method is intended to handle NamedTuple and Tuple θ
-logprior(bm::BayesianModel{TF,NT,PR}, θ) where {TF,NT,PR} =
-    sum(map(_logpdf, bm.priors, θ))
+function logprior(bm::BayesianModel{TF,NT,PR}, θ::Union{NamedTuple,Tuple}=bm[]) where {TF,NT,PR}
+    # The generated part avoids allocations for array θ
+    if @generated
+        ptypes = PR.parameters
+        ex = :(_logpdf(bm.priors[1], θ[1]))
+        N = length(ptypes)
+        if N > 1
+            for i in 2:N
+                ex = :($ex + _logpdf(bm.priors[$i], θ[$i]))
+            end
+        end
+        return ex
+    else
+        return sum(map(_logpdf, bm.priors, θ))
+    end
+end
 
 logprior(bm::TransformedBayesianModel, θ) =
     logprior(parent(bm), transform(bm.transformation, θ))
@@ -376,14 +394,19 @@ end
 function loglikelihood!(bm::BayesianModel{TF,NT,PR,SH,N1,N2,0}, θ) where {TF,NT,PR,SH,N1,N2}
     GZ = bm.GZ
     nsh = nshock(bm)
-    paravals = _update_paravals!(bm.paravals, θ)
+    paravals = _update_paravals!(bm.paravals, θ, bm.paraaxis)
     _fill_shocks!(bm)
-    @inbounds for k in 1:nsh
-        GZk = selectdim(GZ,3,k)
-        mul!(_reshape(GZk, length(GZk)), selectdim(bm.G,3,k), bm.Z[k])
-    end
-    for i in 1:nsh
-        @inbounds bm.SE[i] = paravals[i]
+    k = 0
+    @inbounds for s in 1:nsh
+        Z = bm.Z[s]
+        mZ = _reshape(Z, bm.nT, length(Z)÷bm.nT)
+        ses = paravals[s]
+        for i in 1:size(mZ,2)
+            k += 1
+            GZk = selectdim(GZ,3,k)
+            mul!(_reshape(GZk, length(GZk)), selectdim(bm.G,3,k), selectdim(mZ,2,i))
+            bm.SE[k] = ses[i]
+        end
     end
     r = allcov!(bm.allcovcache, GZ, bm.SE)
     _fill_allcov!(bm.V, r, bm.merror)
@@ -392,12 +415,17 @@ end
 
 function loglikelihood!(bm::BayesianModel, θ)
     nsh = nshock(bm)
-    paravals = _update_paravals!(bm.paravals, θ)
+    paravals = _update_paravals!(bm.paravals, θ, bm.paraaxis)
     _fill_shocks!(bm)
     # Update impulse responses
     bm.impulseupdate(paravals) # Structural parameters in tjac are updated
-    for i in 1:nsh
-        @inbounds bm.SE[i] = paravals[i]
+    k = 0
+    @inbounds for s in 1:nsh
+        ses = paravals[s]
+        for i in 1:length(ses)
+            k += 1
+            bm.SE[k] = ses[i]
+        end
     end
     r = allcov!(bm.allcovcache, bm.GZ, bm.SE)
     _fill_allcov!(bm.V, r, bm.merror)
@@ -408,7 +436,7 @@ end
 loglikelihood!(bm::TransformedBayesianModel, θ) =
     transform_logdensity(bm.transformation, Fix1(loglikelihood!, parent(bm)), θ)
 
-logposterior!(bm::BayesianModel, θ) = loglikelihood!(bm, θ) + logprior(bm, θ)
+logposterior!(bm::BayesianModel, θ) = loglikelihood!(bm, θ) + logprior(bm)
 # Does not add the log Jacobian determinant
 logposterior!(bm::TransformedBayesianModel, θ) =
     logposterior!(parent(bm), transform(bm.transformation, θ))

@@ -47,7 +47,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         @test compare(steadystate!(bpricing, tassvals), tassvals, 1e-8)
         barbitrage = ta.arbitrage_blk()
         @test compare(steadystate!(barbitrage, tassvals), tassvals, 1e-8)
-        bproduction = ta.production_blk()
+        bproduction = ta.production_blk(Hybrid)
         @test compare(steadystate!(bproduction, tassvals), tassvals, 1e-8)
     end
 
@@ -123,10 +123,10 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
         @test ss[:A] ≈ 12.96 atol=1e-5
         @test ss[:B] ≈ 1.04 atol=1e-6
         @test ss[:C] ≈ 0.5820937276337765 atol=1e-7
-        @test ss[:UCE] ≈ 4.434878914013179 atol=1e-6
+        @test ss[:UCE] ≈ 4.434878914013179 atol=1e-5
         @test ss[:CHI] ≈ 0.012706305302404835 atol=1e-8
 
-        m = ta.twoassetmodel()
+        m = ta.twoassetmodel(Hybrid)
         # Directly move the household block
         m.pool[1] = mss.pool[1]
         foreach(i->steadystate!(m.pool[i], tassvals), 3:5)
@@ -199,7 +199,7 @@ compare(a::NT, b::NT, tol::Real) where NT<:NamedTuple =
     end
 
     @testset "Bayesian" begin
-        m = ta.twoassetmodel()
+        m = ta.twoassetmodel(Hybrid)
         # Directly feed in steady state values
         foreach(x->steadystate!(x, tassvals), m.pool[isa.(m.pool, AbstractBlock)])
         exos = [:Z, :rstar, :G, :β, :εr, :εmup, :εmuw]

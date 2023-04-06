@@ -136,7 +136,7 @@ end
 
 const PseudoBlockMat{TF} = PseudoBlockMatrix{TF, Matrix{TF}, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 
-struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, PF<:PartialF, FD} <: AbstractBlockJacobian{TF}
+struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, ins, PF<:PartialF, FD} <: AbstractBlockJacobian{TF}
     blk::BLK
     J::PseudoBlockMat{TF}
     x::Vector{TF}
@@ -146,11 +146,29 @@ struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, PF<:PartialF, FD} <: AbstractBl
     fdcache::FD
 end
 
-function (j::SimpleBlockJacobian)(varvals::NamedTuple)
+# Avoid allocations when src contains multiple element types
+function _tuple_copyto!(dest::AbstractArray, src::T) where {T<:Tuple}
+    if @generated
+        ex = :(k = 1)
+        eltypes = T.parameters
+        for i in 1:length(eltypes)
+            if eltypes[i] <: Number
+                ex = :($ex; dest[k] = src[$i]; k += 1)
+            else
+                ex = :($ex; si = src[$i]; copyto!(dest, k, si); k += length(si))
+            end
+        end
+        return ex
+    else
+        return copyto!(dest, Iterators.flatten(src))
+    end
+end
+
+function (j::SimpleBlockJacobian{BLK,TF,ins})(varvals::NamedTuple) where {BLK,TF,ins}
     invals = map(k->getfield(varvals, k), inputs(j.blk))
-    copyto!(j.g.vals, Iterators.flatten(_hascache(j.g) ? invals[2:end] : invals))
+    _tuple_copyto!(j.g.vals, _hascache(j.g) ? invals[2:end] : invals)
     # A cache should not be reached from any source variable
-    copyto!(j.x, Iterators.flatten((invals[i] for i in j.iins)))
+    _tuple_copyto!(j.x, map(k->getfield(varvals, k), ins))
     finite_difference_jacobian!(j.J.blocks, j.g, j.x, j.fdcache)
     return j
 end
@@ -163,6 +181,8 @@ function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, cache, outwidt
     ni = cumwidths[end]
     vals = Vector{TF}(undef, ni)
     cuts = (0, cumwidths...)
+    vis = inputs(b)
+    ins = ((vis[i] for i in iins)...,)
     iins = collect(iins)
     wiins = cache === nothing ? iins : iins .- 1 # Handle the offset due to skipping cache
     # Collect indices for each individual input value assuming array inputs have fixed length
@@ -182,7 +202,8 @@ function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, cache, outwidt
     fdcache = JacobianCache(Vector{TF}(undef, nii), Vector{TF}(undef, no))
     BJ = PseudoBlockMatrix(J, collect(outwidths), [widths[i] for i in wiins])
     x = collect(TF, Iterators.flatten((invals[i] for i in wiins)))
-    return SimpleBlockJacobian(b, BJ, x, iins, nT, g, fdcache)
+    return SimpleBlockJacobian{typeof(b),TF,ins,typeof(g),typeof(fdcache)}(
+        b, BJ, x, iins, nT, g, fdcache)
 end
 
 function jacobian(b::SimpleBlock, iins, nT::Int, varvals::NamedTuple, TF::Type=Float64)

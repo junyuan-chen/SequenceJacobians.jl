@@ -3,7 +3,7 @@ module Horvath
 using ..SequenceJacobians
 using LinearAlgebra
 
-struct HorvathPlanner{TF<:AbstractFloat,CA}
+struct HorvathPlanner{TF<:AbstractFloat}
     α::Vector{TF}
     ξ::Vector{TF}
     θ::Vector{TF}
@@ -39,7 +39,6 @@ struct HorvathPlanner{TF<:AbstractFloat,CA}
     lμZ::Vector{TF}
     μrhs::Vector{TF}
     μdiff::Vector{TF}
-    ca::CA
 end
 
 function HorvathPlanner(para::AbstractDict)
@@ -80,11 +79,10 @@ function HorvathPlanner(para::AbstractDict)
     lμZ = Vector{TF}(undef, N)
     μrhs = Vector{TF}(undef, N)
     μdiff = Vector{TF}(undef, N)
-    ca = GSL_MultirootFSolverCache(GSL_Hybrids, (f,x)->f, N)
     return HorvathPlanner(α, ξ, θ, Γ, Λ, δ, ρA, C, A, K, I, Z, L, X, Y, VA, μ, ζ,
         ζdiff, Ydiff, goods_mkt, euler,
         invpiece, multmat, μY, xcons, ycons, μcons, μexp, ζk,
-        μZ, lZ, lμZ, μrhs, μdiff, ca)
+        μZ, lZ, lμZ, μrhs, μdiff)
 end
 
 function solveμ!(p::HorvathPlanner, hwelast, μdiff, μ)
@@ -96,7 +94,7 @@ function solveμ!(p::HorvathPlanner, hwelast, μdiff, μ)
 end
 
 # Solutions for steady state follow vom Lehn and Winberry (2021)
-@simple function ss(p, β, eis, frisch, hwelast)
+function ss(p, β, eis, frisch, hwelast, solver)
     fill!(p.A, 1.0)
     p.invpiece .= view(sum(log.(p.Λ.^p.Λ), dims=1), :)
     p.multmat .= p.Γ .* (1.0.-p.θ)' .+ β .* p.Λ .*
@@ -125,8 +123,8 @@ end
         p.μrhs .= log.(p.μY) .- (1.0.-p.θ).*log.(view(prod(p.Γ.^p.Γ, dims=1),:)) .-
             (1.0.-p.α).*p.θ.*log.(p.L) .- (1.0.-p.θ).*log.(p.xcons)
         p.μexp .= LinearAlgebra.I - p.Γ'.*(1.0.-p.θ)
-        r = solve!(p.ca, (f,x)->solveμ!(p,hwelast,f,x), p.μ, ftol=1e-9)
-        p.μ .= r[1]
+        r = solve(solver, (f,x)->solveμ!(p,hwelast,f,x), p.μ, ftol=1e-9)
+        p.μ .= r.x # Assume solver is from NonlinearSystems.jl
         p.ζ .= p.ζk ./ p.K
         p.Y .= p.μY ./ p.μ
     end
@@ -138,7 +136,8 @@ end
     p.VA .= p.K.^p.α .* p.L.^(1.0.-p.α)
     C, K, I, Z, L, X, Y, VA, μ, ζ, A, μY =
         p.C, p.K, p.I, p.Z, p.L, p.X, p.Y, p.VA, p.μ, p.ζ, p.A, p.μY
-    return Ctot, Ltot, C, K, I, Z, L, X, Y, VA, μ, ζ, A, μY
+    return (p=p, Ctot=Ctot, Ltot=Ltot, C=C, K=K, I=I, Z=Z, L=L, X=X, Y=Y, VA=VA, μ=μ, ζ=ζ,
+        A=A, μY=μY)
 end
 
 @simple function consumption(p, μ, eis)
@@ -166,10 +165,10 @@ end
     return Ltotdiff
 end
 
-# sA is added here solely for testing purposes
-@simple function valueadded(p, A, K, L, sA)
+# sA1 and sA2 are added here solely for testing purposes
+@simple function valueadded(p, A, K, L, sA1, sA2)
     VA = p.VA
-    VA .= sA .* A.^(1.0./p.θ) .* lag(K).^p.α .* L.^(1.0.-p.α)
+    VA .= sA1 .* sA2 .* A.^(1.0./p.θ) .* lag(K).^p.α .* L.^(1.0.-p.α)
     return VA
 end
 
@@ -242,16 +241,17 @@ end
     return euler
 end
 
-function Horvathmodel(p, calis)
+function Horvathmodel(p, calis, solver)
     N = length(p.α)
-    calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :sA=>1.0, :K=>p.K, :frisch=>calis[:frisch]]
+    calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :sA1=>1.0, :sA2=>ones(length(p.A)),
+        :K=>p.K, :frisch=>calis[:frisch]]
     calisbζ = [:p=>p, :μ=>p.μ, :I=>p.I, :hwelast=>calis[:hwelast]]
     bY = block([labor_blk(), labortot_blk(), valueadded_blk(), intermediate_blk(),
-        production_blk()], [:μ, :A, :K, :sA], [:Y, :Ltot, :L, :VA, :X],
+        production_blk()], [:μ, :A, :K, :sA1, :sA2], [:Y, :Ltot, :L, :VA, :X],
         calisbY, [:Y=>p.Y, :Ltot=>sum(p.L)],
-        [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=GSL_Hybrids)
+        [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=solver)
     bζ = block([investuse_blk(), investprice_blk()],
-        [:μ, :I], [:ζ, :Z], calisbζ, :ζ=>p.ζ, :ζdiff=>zeros(N), solver=GSL_Hybrids)
+        [:μ, :I], [:ζ, :Z], calisbζ, :ζ=>p.ζ, :ζdiff=>zeros(N), solver=solver)
     m = model([consumption_blk(), constot_blk(), bY, investment_blk(),
         bζ, goods_mkt_blk(), euler_blk()])
     return m

@@ -22,7 +22,7 @@
     @test vals[:w4] ≈ 0.0060783524655172606 atol=1e-12
     @test vals[:ibar] ≈ 1.4277067479299577 atol=1e-10
 
-    m, ss = sw.swmodelss(vals)
+    m, ss = sw.swmodelss(vals, Hybrid)
     endos = [:w, :wf, :n, :nf, :r, :rf]
     exos = [:εa, :εb, :εg, :εI, :εi, :εp, :εw]
     tars = [:goods_mkt_r, :goods_mkt_r_f, :fisher_r, :w_r, :μp_f, :μw_f]

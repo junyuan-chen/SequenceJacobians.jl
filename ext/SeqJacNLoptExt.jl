@@ -1,3 +1,16 @@
+module SeqJacNLoptExt
+
+if isdefined(Base, :get_extension)
+    using NLopt
+    using Printf
+    using SequenceJacobians
+else
+    using ..NLopt
+    using ..Printf
+    using ..SequenceJacobians
+end
+
+const SJ = SequenceJacobians
 const NLopt_Supported = BayesOrTrans
 
 # Wrap the objective function for tracing
@@ -40,12 +53,14 @@ function _solve!(m::NLopt_Supported, solver::Symbol, θ0, maxf::Bool; verbose, k
     return r, counter[]
 end
 
-function SequenceJacobians.mode(bm::BayesOrTrans, solver::Symbol, θ0::AbstractVector;
+function SJ.mode(bm::BayesOrTrans, solver::Symbol, θ0::AbstractVector;
         verbose::Union{Bool,Integer}=false, kwargs...)
     r, counter = _solve!(bm, solver, θ0, true; verbose, kwargs...)
     # Solver result may not be at the last evaluation left in bm
     p = parent(bm)
-    _update_paravals!(p.paravals, bm isa BayesianModel ? r[2] :
-        transform(bm.transformation, r[2]))
+    SJ._update_paravals!(p.paravals, bm isa BayesianModel ? r[2] :
+        transform(bm.transformation, r[2]), p.paraaxis)
     return p[], r[2], counter, r
 end
+
+end # module

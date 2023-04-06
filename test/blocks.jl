@@ -208,7 +208,7 @@ end
     calis = [:Y, :w, :Z, :α, :r, :δ, :εI, :εr]
     b = block([blabor, binvest], [:Y, :w, :Z, :r], [:Q, :K, :N, :mc],
         calis.=>[1.0, 0.66, 0.4677898145312322, 0.3299492385786802, 0.0125, 0.02, 4, 0],
-        [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=GSL_Hybrids)
+        [:Q=>2, :K=>11], [:inv, :val].=>0.0, solver=Hybrid)
     varvals = steadystate!(b, b.ss[])
     @test varvals[:Q] ≈ 1 atol=1e-8
     @test varvals[:K] ≈ 10 atol=1e-8
@@ -225,9 +225,9 @@ end
     @test J.Gs[:r][:Q].out ≈ Jrq atol=1e-7
 
     @test sprint(show, b) ==
-        "CombinedBlock(GSL_Hybrids, SimpleBlock(labor), SimpleBlock(investment))"
+        "CombinedBlock(Hybrid, SimpleBlock(labor), SimpleBlock(investment))"
     @test sprint(show, MIME("text/plain"), b) == """
-        CombinedBlock(GSL_Hybrids) with 2×2 SteadyState{Float64} and 2 GE restrictions:
+        CombinedBlock(Hybrid) with 2×2 SteadyState{Float64} and 2 GE restrictions:
           inputs:  Y, w, Z, r
           outputs: Q, K, N, mc
           blocks:  SimpleBlock(labor), SimpleBlock(investment)"""

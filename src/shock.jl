@@ -16,10 +16,10 @@ function impulse!(out::AbstractVecOrMat, sh::ShockProcess, paravals::NamedTuple)
         return out
     else
         # Each parameter should have the same length
-        N = length(invals[1])
-        outb = _block1(out, Int(size(out,1)/N))
-        for i in 1:N
-            sh.f!(view(outb, Block(i,1)), map(Fix2(getindex, i), invals)...)
+        outb = out isa PseudoBlockVector ? out :
+            rowblocks(out, Int(size(out,1)/length(invals[1])))
+        for i in 1:blocksize(outb,1)
+            sh.f!(view(outb, Block(i)), map(Fix2(getindex, i), invals)...)
         end
         return out
     end

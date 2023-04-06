@@ -60,7 +60,7 @@ end
         @test ss[:K] ≈ 3.1428571428570864 atol=1e-8
         @test ss[:Z] ≈ 0.8816460975214576 atol=1e-8
 
-        @test_throws ArgumentError solve!(Roots_Default, ss)
+        @test_throws ArgumentError _solve!(Roots_Default, ss)
     end
 
     @testset "KrusellSmith" begin
@@ -101,7 +101,7 @@ end
             bhh = m.pool[1]
             bhh.ssargs[:mforward] = 10
             ss = SteadyState(m, calis, inits, tars)
-            solve(Hybrid, ss, ss.inits, ftol=1e-10)
+            solve(Hybrid, ss, ss.inits, xtol=1e-8)
             # Compare results with original Python package
             @test ss[:β] ≈ 0.981952788061795 atol=1e-8
             @test ss[:Z] ≈ 0.8816460975214567 atol=1e-8

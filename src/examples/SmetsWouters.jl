@@ -98,7 +98,7 @@ end
     return k_r_f
 end
 
-function firm_blk()
+function firm_blk(solver)
     inits = [:I, :q, :rk, :k]
     tars = [:I_r, :q_r, :rk_r, :k_r]
     blks = [investment_blk(), tobinq_blk(), kutilization_blk(), keffective_blk(),
@@ -106,17 +106,17 @@ function firm_blk()
     outs = vcat(inits, [:ks, :z, :y, :μp])
     # Expose all inputs to the full model
     ins = setdiff!(union(Iterators.flatten((inputs(x) for x in blks))), outs)
-    return block(blks, ins, outs, ins.=>0.5, inits.=>0, tars.=>0, solver=GSL_Hybrids)
+    return block(blks, ins, outs, ins.=>0.5, inits.=>0, tars.=>0, solver=solver)
 end
 
-function firm_f_blk()
+function firm_f_blk(solver)
     inits = [:If, :qf, :rkf, :kf]
     tars = [:I_r_f, :q_r_f, :rk_r_f, :k_r_f]
     blks = [investment_f_blk(), tobinq_f_blk(), kutilization_f_blk(), keffective_f_blk(),
         production_f_blk(), rentalrate_f_blk(), capital_f_blk()]
     outs = vcat(inits, [:ksf, :zf, :yf, :μp_f])
     ins = setdiff!(union(Iterators.flatten((inputs(x) for x in blks))), outs)
-    return block(blks, ins, outs, ins.=>0.5, inits.=>0, tars.=>0, solver=GSL_Hybrids)
+    return block(blks, ins, outs, ins.=>0.5, inits.=>0, tars.=>0, solver=solver)
 end
 
 @implicit function nkpc_p(πp=0, μp=0, εp=0, π1=0.5, π2=0.5, π3=0.5)
@@ -247,9 +247,9 @@ function swparams(calis)
     return v
 end
 
-function swmodelss(calis)
+function swmodelss(calis, solver)
     m = model([household_blk(), household_f_blk(), wage_markup_blk(), wage_markup_f_blk(),
-        firm_blk(), firm_f_blk(), nkpc_p_blk(), nkpc_w_blk(), monetary_blk(),
+        firm_blk(solver), firm_f_blk(solver), nkpc_p_blk(), nkpc_w_blk(), monetary_blk(),
         fisher_blk(), labor_mkt_blk(), goods_mkt_blk(), goods_mkt_f_blk(),
         ygrowth_blk(), cgrowth_blk(), Igrowth_blk(), wgrowth_blk()])
     ss = SteadyState(m, calis)

@@ -3,7 +3,7 @@ rootsolvercache(::Any, ::SteadyState; kwargs...) = nothing
 struct CombinedBlock{NJ, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{ins,outs}
     ssins::Set{Symbol}
     ss::SS
-    sscache::CA
+    sscache::RefValue{CA}
     ssargs::Dict{Symbol,Any}
     jacus::NTuple{NJ,Symbol}
     jactars::NTuple{NJ,Symbol}
@@ -59,7 +59,7 @@ struct CombinedBlock{NJ, ST, SS<:SteadyState, CA, ins, outs} <: AbstractBlock{in
         end
         # If static==true, inputs should not involve temporal terms but this is not verified
         return new{NJ,ST,SS,typeof(sscache),ins,outs}(
-            ssins, ss, sscache, ssargs, jacus, jactars, jacargs, static)
+            ssins, ss, Ref(sscache), ssargs, jacus, jactars, jacargs, static)
     end
 end
 
@@ -106,8 +106,13 @@ model(b::CombinedBlock) = model(b.ss)
 
 function steadystate!(b::CombinedBlock, varvals::NamedTuple)
     b.ss.varvals[] = merge(b.ss[], NamedTuple{inputs(b)}(varvals))
-    ca = b.sscache
-    bvarvals = solve!(ca===nothing ? solvertype(b) : ca, b.ss; b.ssargs...)
+    if b.sscache isa RefValue{Nothing}
+        bvarvals, _, found = _solve!(solvertype(b), b.ss; b.ssargs...)
+    else
+        bvarvals, r, found = _solve!(b.sscache[], b.ss; b.ssargs...)
+        b.sscache[] = r
+    end
+    found || error("failed to solve steady state")
     return merge(varvals, NamedTuple{outputs(b)}(bvarvals))
 end
 
