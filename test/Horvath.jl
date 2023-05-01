@@ -20,13 +20,17 @@
         @test log(p.VA[2]) ≈ -7.758900353404101 atol=1e-8
         @test log(p.Z[3]) ≈ -8.703794453549149 atol=1e-8
 
-        m = hv.Horvathmodel(p, calis, Hybrid)
+        m = hv.Horvathmodel(p, calis, Hybrid, false)
         vals = merge(ss, (goods_mkt=zeros(N), euler=zeros(N), sA1=1.0, sA2=ones(N)))
         vals = merge(vals, calis)
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
         @time gj = GEJacobian(J, :A)
         gs = GMaps(gj, gj.endosrcs)
         irf = impulse(gs, :A=>0.01 .* p.ρA'.^(0:T-1), (:K, :μ))
+
+        @test_throws ArgumentError sparse(J[:A,:euler], 10)
+        @test sparse(J[:K,:I], 10) == J[:K,:I](10)
+        @test sparse(J.parts[:euler][:μ], 10) == J.parts[:euler][:μ](10)
 
         irfAK = irf[:A][:K][:,2,2] .+ vals[:K][2]
         @test irfAK[1:4] ≈ [8.37086769055079e-5, 8.37153354856315e-5, 8.37218320155476e-5,
@@ -40,6 +44,17 @@
         irfAμ = irf[:A][:μ][:,10,15] .+ vals[:μ][10]
         @test irfAμ[1:4] ≈ [926.915440844600, 926.911409549962, 926.906755224990,
             926.910364350904] atol=1e-3
+
+        # Solve the production block with a sparse solver
+        m1 = hv.Horvathmodel(p, calis, Hybrid, true)
+        @time J1 = TotalJacobian(m1, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
+        @test J1.blkjacs[3].Gs.gj.solver isa UmfpackLUSolver
+        @test J1.blkjacs[3].J ≈ J.blkjacs[3].J
+        @time gj1 = GEJacobian(J1, :A)
+        gs1 = GMaps(gj1, gj1.endosrcs)
+        irf1 = impulse(gs1, :A=>0.01 .* p.ρA'.^(0:T-1), (:K, :μ))
+        @test irf1[:A][:K] ≈ irf[:A][:K]
+        @test irf1[:A][:μ] ≈ irf[:A][:μ]
     end
 
     if !Sys.iswindows() # Skip GitHub CI on Windows due to OutOfMemoryError
@@ -60,7 +75,7 @@
         @test log(p.VA[1]) ≈ -7.443153329291874 atol=1e-8
         @test log(p.Z[1]) ≈ -11.992266967437140 atol=1e-8
 
-        m = hv.Horvathmodel(p, calis, Hybrid)
+        m = hv.Horvathmodel(p, calis, Hybrid, false)
         vals = merge(ss, (goods_mkt=zeros(N), euler=zeros(N), sA1=1.0, sA2=ones(N)))
         vals = merge(vals, calis)
         @time J = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T)
@@ -146,6 +161,18 @@
         fdf = OnceDifferentiable(md, zeros(1), zeros(length(tarvals)))
         r1 = solve(Hybrid{LeastSquares}, fdf, [1.1], showtrace=1)
         @test Symbol(getexitstate(r1)) == :ftol_reached
+
+        # Solve the production block with a sparse solver
+        m2 = hv.Horvathmodel(p, calis, Hybrid, true)
+        j2 = TotalJacobian(m2, (:A, :K, :μ), (:euler, :goods_mkt), vals, T, dZs=(:A=>dA,))
+        gj2 = GEJacobian(j2, :A)
+        gs2 = GMaps(gj2)
+        u2 = ImpulseUpdate(gs2, :sA1, :A, :Y, 16)
+        md2 = ImpulseResidual(u2, tarvals)
+        fdf2 = OnceDifferentiable(md2, zeros(1), zeros(length(tarvals)))
+        r2 = solve(Hybrid{LeastSquares}, fdf2, [1.1], showtrace=1)
+        @test Symbol(getexitstate(r2)) == :ftol_reached
+        @test r2.x ≈ r1.x
 
         # Create artificial data just for testing
         df = DataFrame([Symbol(:Y,i)=>0.9.^(1:30) for i in 1:N])

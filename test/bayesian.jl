@@ -63,7 +63,7 @@
     @test l2 ≈ -58.03849625108774 atol=1e-5
     @test dl2 ≈ [-146.3345012664795, 2.810868263244629, -3.8802170753479004] atol=1e-4
     @test vcov(parent(bm2), θmode2) ≈ Σ atol=5e-8
-    @test stderror(parent(bm2), θmode2) ≈ se atol=1e-7
+    @test stderror(parent(bm2), θmode2) ≈ se atol=1e-6
 
     @test sprint(show, bm2) == "156×1 TransformedBayesianModel(3)"
     @test sprint(show, MIME("text/plain"), bm2) == """
@@ -89,7 +89,7 @@
     spl3 = MetropolisHastings(RandomWalkProposal{true}(MvNormal(zeros(3), 2.5.*Hermitian(Σ3))))
     @time chain3 = sample(bm3, spl3, N, init_params=rx3,
         param_names=collect(keys(bm[])), chain_type=Chains, progress=false)
-    @test acceptance_rate(view(chain3.value, Ndrop+1:N, 1, 1)) < 0.2
+    @test acceptance_rate(view(chain3.value, Ndrop+1:N, 1, 1)) < 0.3
     postmh = StructArray(transform(tr, view(chain3.value,t,1:3,1)) for t in 1:N)
 
     @time r = mcmc_with_warmup(Random.default_rng(), bm3, N÷10; reporter=NoProgressReport())

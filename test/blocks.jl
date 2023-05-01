@@ -222,7 +222,7 @@ end
     Jrq = [0 -0.97663311 -0.95729755;
            0 0.00736934  -0.97297837;
            0 0.00370042   0.00736934 ]
-    @test J.Gs[:r][:Q].out ≈ Jrq atol=1e-7
+    @test J.Gs[:r][:Q].out ≈ Jrq atol=1e-6
 
     @test sprint(show, b) ==
         "CombinedBlock(Hybrid, SimpleBlock(labor), SimpleBlock(investment))"

@@ -18,6 +18,9 @@
         @test JK[:r](3)[:,1] ≈ [0, -0.009911363636363545, 0] atol=1e-8
         @test JK[:C](3)[:,1] ≈ [0, 0.03225, 0] atol=1e-8
 
+        @test J[:K,:w].outs[1](3) == sparse(J[:K,:w], 3)
+        @test J[:K,:euler].outs[1](3) == sparse(J[:K,:euler], 3)
+
         @test J.nsrcbytar == [3, 3]
         @test J.ntarbysrc == [2, 2, 2]
         @test inlength(J) == 3
@@ -75,9 +78,9 @@
         @test G[300,298:300] ≈ [7.63355815e-1,  8.39331787e-1,  9.22957992e-1] atol=1e-5
 
         @test sprint(show, gs[:Z][:w]) == "ShiftMap{Float64}(2)"
-        @test sprint(show, MIME("text/plain"), gs[:Z][:w])[1:98] == """
+        @test sprint(show, MIME("text/plain"), gs[:Z][:w])[1:115] == """
             ShiftMap{Float64} with 2 components:
-              CompositeShift{Float64, Float64}([(-1, 0), (0, 0)], [0.0311"""
+              CompositeShift{Float64, Float64}([(-1, 0), (0, 0)], Int64[], Int64[], [0.031"""
         @test sprint(show, gs[:Z][:K]) == "MatrixMap{Float64}(1)"
         @test sprint(show, MIME("text/plain"), gs[:Z][:K])[1:58] == """
             MatrixMap{Float64} combined from 1 component:

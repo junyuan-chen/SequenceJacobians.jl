@@ -46,10 +46,12 @@ struct SimpleBlock{F<:Function,ins,outs,NI} <: AbstractBlock{ins,outs}
     invars::NTuple{NI,VarSpec}
     ssins::Set{Symbol}
     f::F
+    allowstaticargs::Bool
     function SimpleBlock(ins::NTuple{NI,Symbol}, invars::NTuple{NI,VarSpec},
-            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, f::F) where {NI,NO,F}
+            ssins::Set{Symbol}, outs::NTuple{NO,Symbol}, f::F;
+            allowstaticargs::Bool=true) where {NI,NO,F}
         _checkinsouts(ins, outs, ssins)
-        return new{F,ins,outs,NI}(invars, ssins, f)
+        return new{F,ins,outs,NI}(invars, ssins, f, allowstaticargs)
     end
 end
 
@@ -82,21 +84,26 @@ end
 
 abstract type AbstractBlockJacobian{TF} end
 
-struct ArrayToArgs{cumwidths}
-    function ArrayToArgs(cumwidths::NTuple{N,Int}) where N
+struct ArrayToArgs{CumWidths, StaticArgs}
+    function ArrayToArgs(cumwidths::NTuple{N,Int}, staticargs::Bool=true) where N
         N >= 1 || throw(ArgumentError("length of cumwidths must be at least 1"))
-        return new{cumwidths}()
+        return new{cumwidths, staticargs}()
     end
 end
 
-function (aa::ArrayToArgs{W})(A::AbstractArray) where W
+function (aa::ArrayToArgs{W,S})(A::AbstractArray{T}) where {W,S,T}
     if @generated
         i0 = 0
         ex = :()
         for w in W
             i0 < w || error("invalid cumwidths $W")
             # Singleton array input is treated as scalar, which should be fine
-            push!(ex.args, i0+1 < w ? :(view(A, $(i0+1):$w)) : :(A[$(i0+1)]))
+            if S
+                push!(ex.args, i0+1 < w ? :(SVector{$L,T}(ntuple(i->A[$i0+i], $L))) :
+                    :(A[$(i0+1)]))
+            else
+                push!(ex.args, i0+1 < w ? :(view(A, $(i0+1):$w)) : :(A[$(i0+1)]))
+            end
             i0 = w
         end
         return ex
@@ -105,19 +112,21 @@ function (aa::ArrayToArgs{W})(A::AbstractArray) where W
         args = ()
         for w in W
             i0 < w || error("invalid cumwidths $W")
-            args = i0+1 < w ? (args..., view(A, i0+1:w)) : (args..., A[i0+1])
+            L = w - i0
+            args = i0+1 < w ? S ? (args..., SVector{w-i0}(ntuple(i->A[i0+i], L))) :
+                (args..., view(A, i0+1:w)) : (args..., A[i0+1])
             i0 = w
         end
         return args
     end
 end
 
-struct PartialF{F<:Function, TF<:Real, CA, I}
+struct PartialF{F<:Function, TF<:Real, CA, I, S}
     f::F
     inds::Vector{Int}
     vals::Vector{TF}
     cache::CA
-    toargs::ArrayToArgs{I}
+    toargs::ArrayToArgs{I,S}
 end
 
 _hascache(::PartialF{F,TF,CA}) where {F,TF,CA} = CA !== Nothing
@@ -134,7 +143,7 @@ function (g::PartialF)(fx::AbstractVector, xs)
     return fx
 end
 
-const PseudoBlockMat{TF} = PseudoBlockMatrix{TF, Matrix{TF}, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+const PseudoBlockMat{TF, P} = PseudoBlockMatrix{TF, P, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 
 struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, ins, PF<:PartialF, FD} <: AbstractBlockJacobian{TF}
     blk::BLK
@@ -177,7 +186,7 @@ function SimpleBlockJacobian(b::SimpleBlock, iins, invals::Tuple, cache, outwidt
         nT::Int, TF::Type)
     widths = map(length, invals)
     cumwidths = cumsum(widths)
-    toargs = ArrayToArgs(cumwidths)
+    toargs = ArrayToArgs(cumwidths, b.allowstaticargs)
     ni = cumwidths[end]
     vals = Vector{TF}(undef, ni)
     cuts = (0, cumwidths...)
@@ -209,10 +218,10 @@ end
 function jacobian(b::SimpleBlock, iins, nT::Int, varvals::NamedTuple, TF::Type=Float64)
     # Assume there is only one cache per block and it is placed in the front
     # (Do not place it at the end as there could be temporal terms added from macros)
-    vallast = varvals[inputs(b)[1]]
-    hascache = !(vallast isa Union{Real, AbstractArray{<:Real}})
+    val1 = varvals[inputs(b)[1]]
+    hascache = !(val1 isa Union{Real, AbstractArray{<:Real}})
     # Copy the cache to ensure that original values are not mutated
-    cache = hascache ? deepcopy(vallast) : nothing
+    cache = hascache ? deepcopy(val1) : nothing
     invals = map(k->getfield(varvals, k), hascache ? inputs(b)[2:end] : inputs(b))
     outwidths = map(k->length(getfield(varvals, k)), outputs(b))
     j = SimpleBlockJacobian(b, iins, invals, cache, outwidths, nT, TF)

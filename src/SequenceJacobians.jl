@@ -14,15 +14,19 @@ using FillArrays: Fill, Zeros
 using FiniteDiff: JacobianCache, finite_difference_jacobian!, GradientCache,
     finite_difference_gradient!, HessianCache, finite_difference_hessian!, default_relstep
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
-using LinearAlgebra: BLAS, LAPACK, I, UniformScaling, Diagonal, LU, lu!, rmul!,
+using LinearAlgebra: BLAS, LAPACK, I, UniformScaling, Diagonal, LU, lu!, lu, rmul!,
     Hermitian, cholesky!, ldiv!, inv!, norm, dot, stride1, diag, diagind
 using LogDensityProblems: LogDensityOrder
 using MacroTools
 using MacroTools: postwalk
 using Printf
 using Requires
+using SparseArrays: AbstractSparseMatrixCSC, SparseMatrixCSC, spdiagm, spzeros,
+    getcolptr, getnzval, nzrange
 using SplitApplyCombine: splitdimsview
+using StaticArraysCore: SVector
 using Statistics: mean
+using StatsBase: _denserank!
 using StructArrays: StructArray
 using Tables
 using TransformVariables: AbstractTransform, transform_logdensity
@@ -37,6 +41,7 @@ import Graphs: SimpleDiGraph, edgetype, nv, ne, vertices, edges, is_directed,
     has_vertex, has_edge, inneighbors, outneighbors, neighborhood
 import LinearAlgebra: isdiag, mul!
 import LogDensityProblems: capabilities, dimension, logdensity, logdensity_and_gradient
+import SparseArrays: sparse
 import StatsAPI: vcov, stderror
 import StatsBase: mode
 import TransformVariables: transform
@@ -83,6 +88,12 @@ export supconverged,
        NLsolve_Solver,
        BroydenCache,
        NLsolve_Cache,
+
+       AbstractLinearSolver,
+       DenseLinearSolver,
+       SparseLinearSolver,
+       DenseLUSolver,
+       UmfpackLUSolver,
 
        VarSpec,
        varspec,
@@ -226,6 +237,7 @@ include("utils.jl")
 include("shift.jl")
 include("jacmap.jl")
 include("solverinterface.jl")
+include("linearsolver.jl")
 include("block.jl")
 include("hetagent.jl")
 include("lawofmotion.jl")

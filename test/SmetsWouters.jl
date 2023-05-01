@@ -20,14 +20,15 @@
     @test vals[:k2] ≈ 0.19827414450360034 atol=1e-10
     @test vals[:π3] ≈ 0.04405992150062866 atol=1e-10
     @test vals[:w4] ≈ 0.0060783524655172606 atol=1e-12
-    @test vals[:ibar] ≈ 1.4277067479299577 atol=1e-10
+    @test vals[:i] ≈ 1.4277067479299577 atol=1e-10
 
     m, ss = sw.swmodelss(vals, Hybrid)
     endos = [:w, :wf, :n, :nf, :r, :rf]
     exos = [:εa, :εb, :εg, :εI, :εi, :εp, :εw]
     tars = [:goods_mkt_r, :goods_mkt_r_f, :fisher_r, :w_r, :μp_f, :μw_f]
     T = 300
-    j = TotalJacobian(m, vcat(endos, exos), tars, ss[], T)
+    vals = merge(vals, sw.default_params, ss[])
+    j = TotalJacobian(m, vcat(endos, exos), tars, vals, T)
 
     # Compare results with Python paper replication
     Jc_εb = j.parts[:c][:εb]
@@ -133,7 +134,7 @@
 
     εi = zeros(T, 1)
     εi[1] = 1
-    j1 = TotalJacobian(m, vcat(endos, exos), tars, ss[], T, dZs=[:εi=>εi])
+    j1 = TotalJacobian(m, vcat(endos, exos), tars, vals, T, dZs=[:εi=>εi])
     @test j1.totals[:εi][:i].out ≈ j1.parts[:i][:εi][:,1]
     gj1 = GEJacobian(j1, :εi, endos)
     gs1 = GMaps(gj1)
@@ -141,15 +142,12 @@
     vars = [:εi=>vobs]
     nobs = length(vobs)
     # Use actual irfs under original parameters as targets
-    tarvals = PseudoBlockVector(Vector{Float64}(undef, 16*nobs), fill(16, nobs))
+    tarvals = rowblocks(Vector{Float64}(undef, 16*nobs), 16)
     for (i, n) in enumerate(vobs)
         gs1(view(tarvals, Block(i)), :εi, n)
     end
     u = ImpulseUpdate(gs1, :ρ, :εi, vobs, 16)
-    function md(resids, θ)
-        u(θ)
-        resids .= _reshape(u.vals, length(u.vals)) .- tarvals.blocks
-    end
+    md = ImpulseResidual(u, tarvals.blocks)
     @test u[] == (ρ=0.875,)
     fdf = OnceDifferentiable(md, [0.6], zeros(length(tarvals)))
     r = solve(Hybrid{LeastSquares}, fdf, [0.6])
@@ -158,11 +156,11 @@
 
     εa = zeros(T, 1)
     εi[1] = 1
-    j2 = TotalJacobian(m, vcat(endos, [:εa, :εi]), tars, ss[], T, dZs=[:εa=>εa, :εi=>εi])
+    j2 = TotalJacobian(m, vcat(endos, [:εa, :εi]), tars, vals, T, dZs=[:εa=>εa, :εi=>εi])
     gj2 = GEJacobian(j2, (:εa, :εi), endos)
     gs2 = GMaps(gj2)
     vars = [:εa=>vobs, :εi=>vobs]
-    tarvals = PseudoBlockVector(Vector{Float64}(undef, 32*nobs), fill(16, 2*nobs))
+    tarvals = rowblocks(Vector{Float64}(undef, 32*nobs), 16)
     i = 1
     for (exo, vobs) in vars
         for n in vobs
@@ -174,7 +172,8 @@
     md2 = ImpulseResidual(u2, tarvals.blocks)
     @test u2[] == (α=0.197, ρ=0.875)
     fdf = OnceDifferentiable(md2, zeros(2), zeros(length(tarvals)))
-    r1 = solve(Hybrid{LeastSquares}, fdf, [0.4, 0.6], thres_jac=1)
+    r1 = solve(Hybrid{LeastSquares}, fdf, [0.4, 0.6],
+        lower=[0.1,0.5], upper=[0.6,0.99], thres_jac=1)
     @test u2[:α] ≈ 0.197 atol=1e-6
     @test u2[:ρ] ≈ 0.875 atol=1e-6
 

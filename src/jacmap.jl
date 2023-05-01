@@ -111,6 +111,17 @@ function (S::ShiftMap{TF})(nT::Int) where TF
     end
 end
 
+function mul!(C::AbstractSparseMatrixCSC, S::ShiftMap, s::Number, β::Number=false;
+        rankdiag::Bool=true, kwargs...)
+    S.ins == [true] || throw(ArgumentError("S is dense"))
+    return _unsafe_mul!(C, S.outs[1], s, true, β; rankdiag=rankdiag)
+end
+
+function sparse(S::ShiftMap{TF}, nT::Int) where TF
+    S.ins == [true] || throw(ArgumentError("S is dense"))
+    return sparse(S.outs[1], nT)
+end
+
 function _updateout!(Smap::ShiftMap)
     @inbounds for i in eachindex(Smap.outs)
         mul!(Smap.outs[i], Smap.maps[i][1], Smap.inshifts[i][1], true, false)

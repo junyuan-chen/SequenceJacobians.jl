@@ -17,11 +17,13 @@
     @test isdiag(Shift([(0,1)], [[view(vv, 2:2, 1:1)]], (1,1)))
     @test iszero(S) == false
 
-    M = S(3)
-    @test (+S)(3) == M
-    @test (S + S)(3) == 2*M
+    M = S(5)
+    @test (+S)(5) == M
+    @test (S + S)(5) == 2*M
     S1 = S * true
-    @test (S * S1)(3) == CompositeShift([(-2,1)], [4], (1,1))(3)
+    @test (S * S1)(5) == CompositeShift([(-2,1)], [1], (1,1))(5)
+    @test sparse(S, 5) == M
+    @test sparse(Z, 5) == Z(5)
 
     C = fill(NaN, 4, 4)
     B = I(4)

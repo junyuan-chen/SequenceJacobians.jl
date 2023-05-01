@@ -9,7 +9,6 @@ using CodecZlib: GzipDecompressorStream
 using DataFrames: DataFrame, ncol, nrow
 using Distributions
 using DynamicHMC
-using GSL
 using JSON3
 using LinearAlgebra
 using LogDensityProblems: logdensity, logdensity_and_gradient
@@ -21,14 +20,11 @@ using NonlinearSystems
 using Random
 using Roots: Brent, Secant
 using SequenceJacobians: ArrayToArgs, ar1impulse!, _solve!, _reshape
+using SparseArrays
 using StructArrays
 using TransformVariables: as, asℝ₊, as𝕀
 
 import SequenceJacobians: backwardsolver, forwardsolver
-
-if VERSION >= v"1.7"
-    using OpenBLAS32_jll
-end
 
 exampledata(name::Union{Symbol,String}) =
     CSV.read(pkgdir(SequenceJacobians)*"/data/$name.csv.gz", DataFrame)

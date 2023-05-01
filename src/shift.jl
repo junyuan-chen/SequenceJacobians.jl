@@ -3,18 +3,22 @@ const MatOrSub{T} = Union{Matrix{T}, SubMat{T}}
 
 struct Shift{T<:Number, S, M<:MatOrSub{T}}
     d::Vector{Tuple{Int,Int}}
+    r::Vector{Int}
+    p::Vector{Int}
     v::Vector{Vector{M}}
     size::Tuple{Int,Int}
     Shift(d::Vector{Tuple{Int,Int}}, v::Vector{Vector{M}}, size::Tuple{Int,Int}) where M =
-        new{eltype(eltype(eltype(v))), size==(1,1), M}(d, v, size)
+        new{eltype(eltype(eltype(v))), size==(1,1), M}(d, Int[], Int[], v, size)
 end
 
 struct CompositeShift{T<:Number, V<:Union{T,Matrix{T}}}
     d::Vector{Tuple{Int,Int}}
+    r::Vector{Int}
+    p::Vector{Int}
     v::Vector{V}
     size::Tuple{Int,Int}
     CompositeShift(d::Vector{Tuple{Int,Int}}, v::Vector{<:Union{T,Matrix{T}}},
-        size::Tuple{Int,Int}) where T = new{T,eltype(v)}(d, v, size)
+        size::Tuple{Int,Int}) where T = new{T,eltype(v)}(d, Int[], Int[], v, size)
 end
 
 const ShiftOrComp{T} = Union{Shift{T}, CompositeShift{T}}
@@ -22,23 +26,17 @@ const ShiftOrComp{T} = Union{Shift{T}, CompositeShift{T}}
 # Sign convention for lead/lag follows the Python package (lags take negative values)
 # The paper appendix uses the opposite sign
 
-@inline function mul!(C::AbstractMatrix{T1}, S::Shift{T2,true}, s::Number,
-        α::Number=true, β::Number=false) where {T1,T2}
-    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
-    @inbounds for ((id, m), vs) in zip(S.d, S.v)
-        val = convert(T1, s * α * sum(Fix2(getindex, 1), vs))
-        for k in diagind(C, id)[m+1:end]
-            C[k] += val
-        end
-    end
-    return C
-end
+@inline _val(::Shift{T,true}, s::Number, α::Number, vs) where T =
+    convert(T, s * α * sum(Fix2(getindex, 1), vs))
+@inline _val(::CompositeShift{T,T}, s::Number, α::Number, v) where T =
+    convert(T, s * α * v)
 
-@inline function mul!(C::AbstractMatrix{T1}, S::CompositeShift{T2,T2}, s::Number,
+@inline function mul!(C::AbstractMatrix{T1},
+        S::Union{Shift{T2,true}, CompositeShift{T2,T2}}, s::Number,
         α::Number=true, β::Number=false) where {T1,T2}
     iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
     @inbounds for ((id, m), v) in zip(S.d, S.v)
-        val = convert(T1, s * α * v)
+        val = _val(S, s, α, v)
         for k in diagind(C, id)[m+1:end]
             C[k] += val
         end
@@ -46,29 +44,13 @@ end
     return C
 end
 
-@inline function mul!(C::AbstractMatrix{T1}, S::Shift{T2,false}, s::Number,
-        α::Number=true, β::Number=false) where {T1,T2}
-    nT, nT1 = Int.(size(C)./S.size)
-    nT == nT1 || throw(DimensionMismatch(
-        "C of size ($(size(C))) does not match S of block size ($(S.size))"))
-    Cb = _block2(C, nT)
-    iszero(β) ? fill!(C, zero(T1)) : isone(β) ? C : rmul!(C, β)
-    M, N = S.size
-    @inbounds for j in 1:N
-        for i in 1:M
-            blk = view(Cb, Block(i, j))
-            for ((id, m), vs) in zip(S.d, S.v)
-                val = convert(T1, s * α * sum(v->v[i,j], vs))
-                for k in diagind(blk, id)[m+1:end]
-                    blk[k] += val
-                end
-            end
-        end
-    end
-    return C
-end
+@propagate_inbounds _val(::Shift{T,false}, s::Number, α::Number, vs,
+    i::Int, j::Int) where T = convert(T, s * α * sum(v->v[i,j], vs))
+@propagate_inbounds _val(::CompositeShift{T,Matrix{T}}, s::Number, α::Number, v,
+    i::Int, j::Int) where T = convert(T, s * α * v[i,j])
 
-@inline function mul!(C::AbstractMatrix{T1}, S::CompositeShift{T2,Matrix{T2}}, s::Number,
+@inline function mul!(C::AbstractMatrix{T1},
+        S::Union{Shift{T2,false}, CompositeShift{T2,Matrix{T2}}}, s::Number,
         α::Number=true, β::Number=false) where {T1,T2}
     nT, nT1 = Int.(size(C)./S.size)
     nT == nT1 || throw(DimensionMismatch(
@@ -80,7 +62,7 @@ end
         for i in 1:M
             blk = view(Cb, Block(i, j))
             for ((id, m), v) in zip(S.d, S.v)
-                val = convert(T1, s * α * v[i,j])
+                val = _val(S, s, α, v, i, j)
                 for k in diagind(blk, id)[m+1:end]
                     blk[k] += val
                 end
@@ -90,8 +72,97 @@ end
     return C
 end
 
-(S::Shift{T})(n::Integer) where T = mul!(zeros(T, n.*S.size), S, true, true, true)
-(S::CompositeShift{T})(n::Integer) where T = mul!(zeros(T, n.*S.size), S, true, true, true)
+(S::Union{Shift{T}, CompositeShift{T}})(n::Integer) where T =
+    mul!(zeros(T, n.*S.size), S, true, true, true)
+
+function _rankdiag!(r::Vector{Int}, d::Vector{Tuple{Int,Int}}, p::Vector{Int})
+    S = length(d)
+    resize!(r, S)
+    resize!(p, S)
+    id = SVector{S}(ntuple(i->d[i][1], S))
+    sortperm!(p, id; rev=true)
+    _denserank!(r, id, p)
+end
+
+# Unsafe because C is assumed to have the correct sparsity pattern
+@inline function _unsafe_mul!(C::AbstractSparseMatrixCSC{T1},
+        S::Union{Shift{T2,true}, CompositeShift{T2,T2}}, s::Number,
+        α::Number=true, β::Number=false; rankdiag::Bool=true) where {T1,T2}
+    Mc, Nc = size(C)
+    Mc == Nc || throw(ArgumentError("C is expected to be a square matrix"))
+    rankdiag && _rankdiag!(S.r, S.d, S.p)
+    ptr = getcolptr(C)
+    nzs = getnzval(C)
+    iszero(β) ? fill!(nzs, zero(T1)) : isone(β) ? nzs : rmul!(nzs, β)
+    R = S.r[S.p[end]]
+    J1 = max(S.d[S.p[1]][1], 0)
+    J2 = max(-S.d[S.p[end]][1], 0)
+    @inbounds for (k, v) in enumerate(S.v)
+        id, m = S.d[k]
+        j1 = max(id,0) + m + 1 # The first column the value appears
+        offset = S.r[k] - 1
+        val = _val(S, s, α, v)
+        # The entire diagonal is structurally non-zero, no matter what m takes
+        for j in j1:J1
+            # Compute index from backward as the beginning values may not be there
+            nzs[ptr[j+1]+offset-R] += val
+        end
+        for j in max(Nc-J2+1,j1):Nc+min(id,0)
+            nzs[ptr[j]+offset] += val
+        end
+        nzs[ptr[max(J1+1,j1)]+offset:R:ptr[max(Nc-J2+1,j1)]-1] .+= val
+    end
+    return C
+end
+
+@inline function _unsafe_mul!(C::AbstractSparseMatrixCSC{T1},
+        S::Union{Shift{T2,false}, CompositeShift{T2,Matrix{T2}}}, s::Number,
+        α::Number=true, β::Number=false; rankdiag::Bool=true) where {T1,T2}
+    Mc, Nc = size(C)
+    nT, nT1 = Int.((Mc, Nc)./S.size)
+    nT == nT1 || throw(DimensionMismatch(
+        "C of size ($(size(C))) does not match S of block size ($(S.size))"))
+    rankdiag && _rankdiag!(S.r, S.d, S.p)
+    ptr = getcolptr(C)
+    nzs = getnzval(C)
+    iszero(β) ? fill!(nzs, zero(T1)) : isone(β) ? nzs : rmul!(nzs, β)
+    R = S.r[S.p[end]]
+    J1 = max(S.d[S.p[1]][1], 0)
+    J2 = max(-S.d[S.p[end]][1], 0)
+    M, N = S.size
+    @inbounds for bj in 1:N
+        for bi in 1:M
+            for (k, v) in enumerate(S.v)
+                id, m = S.d[k]
+                j1 = max(id,0) + m + 1 # The first column the value appears
+                offset = S.r[k] - 1
+                val = _val(S, s, α, v, bi, bj)
+                j0 = (bj-1) * nT
+                for j in j0+j1:j0+J1
+                    nz = (ptr[j+1] - ptr[j]) ÷ M
+                    # Compute index from backward as the beginning values may not be there
+                    nzs[ptr[j+1]+offset-R-(M-bi)*nz] += val
+                end
+                for j in j0+max(nT-J2+1,j1):j0+nT+min(id,0)
+                    nz = (ptr[j+1] - ptr[j]) ÷ M
+                    nzs[ptr[j]+offset+(bi-1)*nz] += val
+                end
+                nzs[ptr[j0+max(J1+1,j1)]+(bi-1)*R+offset:M*R:ptr[j0+max(nT-J2+1,j1)]-1] .+= val
+            end
+        end
+    end
+    return C
+end
+
+function sparse(S::Union{Shift{T}, CompositeShift{T}}, n::Integer) where T
+    ids = unique!(getindex.(S.d, 1))
+    R = maximum(abs, ids)
+    n > R || throw(ArgumentError("requested size of array ($n) is too small"))
+    M, N = S.size
+    out = spdiagm(n, n, (d => zeros(T, n - abs(d)) for d in ids)...)
+    M*N > 1 && (out = hvcat(N, (out for _ in 1:M*N)...))
+    return _unsafe_mul!(out, S, true, true, true)
+end
 
 eltype(::Type{<:ShiftOrComp{T}}) where T = T
 ndims(::ShiftOrComp) = 2
@@ -224,7 +295,7 @@ end
     return S
 end
 
-# The case where array input meets scalar
+# The case where scalar input meets array output
 @inline function mul!(S::CompositeShift{T,Matrix{T}}, S1::Shift{T,true},
         S2::CompositeShift{T,Matrix{T}}, α::Number, β::Number) where T
     D = S.d
@@ -241,6 +312,39 @@ end
             else
                 m = V[k]
                 mul!(m, S2.v[i2], α * sum(v->v[1], S1.v[i1]), true, true)
+            end
+        end
+    end
+    return S
+end
+
+# The case where array input meets scalar output
+@inline function mul!(S::CompositeShift{T,Matrix{T}}, S1::Shift{T,false},
+        S2::CompositeShift{T,T}, α::Number, β::Number) where T
+    M, N = S1.size
+    N == 1 || throw(DimensionMismatch("S1 is expected to have only one input variable"))
+    D = S.d
+    V = S.v
+    # This ensures all values get multiplied
+    iszero(β) ? foreach(v->fill!(v, zero(T)), V) : isone(β) ? V : foreach(v->rmul!(v, β), V)
+    for (i1, (id1, m1)) in enumerate(S1.d)
+        for (i2, (id2, m2)) in enumerate(S2.d)
+            kl = _mulind(id1, m1, id2, m2)
+            k = findfirst(x->x==kl, D)
+            if k === nothing
+                push!(D, kl)
+                m = zeros(T, M, N)
+                for v in S1.v[i1]
+                    m .+= v
+                end
+                m .*= α * S2.v[i2]
+                push!(V, m)
+            else
+                m = V[k]
+                v2 = S2.v[i2]
+                for v in S1.v[i1]
+                    m .+= α .* v .* v2
+                end
             end
         end
     end
@@ -300,6 +404,9 @@ end
 
 (*)(S1::Shift{T,true}, S2::CompositeShift{T,T}) where T =
     mul!(CompositeShift(Tuple{Int,Int}[], T[], (1,1)), S1, S2, true, true)
+
+(*)(S1::Shift{T,false}, S2::CompositeShift{T,T}) where T =
+    mul!(CompositeShift(Tuple{Int,Int}[], Matrix{T}[], (S1.size[1],1)), S1, S2, true, true)
 
 (*)(S1::Shift{T,true}, S2::CompositeShift{T,Matrix{T}}) where T =
     mul!(CompositeShift(Tuple{Int,Int}[], Matrix{T}[], (1,S2.size[2])), S1, S2, true, true)

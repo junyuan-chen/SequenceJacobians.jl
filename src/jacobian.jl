@@ -168,25 +168,29 @@ function show(io::IO, ::MIME"text/plain", j::TotalJacobian{TF}) where TF
     join(io, j.tars, ", ")
 end
 
-const BlockMat{TF} = BlockMatrix{TF, Matrix{Union{Zeros{TF, 2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}, SubArray{TF, 2, Matrix{TF}, Tuple{UnitRange{Int64}, UnitRange{Int64}}, false}, Matrix{TF}}}, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+# Unlike AbstractMatrix, no type stability issue when updating values
+const DenseBlock{TF} = Union{Zeros{TF, 2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}, SubArray{TF, 2, Matrix{TF}, Tuple{UnitRange{Int64}, UnitRange{Int64}}, false}, Matrix{TF}}
 
-struct GEJacobian{TF<:AbstractFloat, NT}
+const BlockMat{TF, BLK} = BlockMatrix{TF, Matrix{BLK}, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+
+struct GEJacobian{TF<:AbstractFloat, NT, S<:AbstractLinearSolver, HU, HUBLK}
     tjac::TotalJacobian{TF,NT}
     exovars::Vector{Symbol}
     endosrcs::Vector{Symbol}
-    H_Z::PseudoBlockMat{TF}
-    H_Zblks::BlockMat{TF}
+    H_Z::PseudoBlockMat{TF,Matrix{TF}}
+    H_Zblks::BlockMat{TF,DenseBlock{TF}}
     iH_Zshift::Vector{Tuple{Int,Int}}
-    H_Uws::LUWs
-    H_U::PseudoBlockMat{TF}
-    H_Ublks::BlockMat{TF}
+    solver::S
+    H_U::PseudoBlockMat{TF,HU}
+    H_Ublks::BlockMat{TF,HUBLK}
     iH_Ushift::Vector{Tuple{Int,Int}}
-    G_U::PseudoBlockMat{TF}
+    G_U::PseudoBlockMat{TF,Matrix{TF}}
     nTfull::Int
     nZcol::Vector{Int}
 end
 
-function _fill_jac!(out, ishift, totals, vars, varwidths, tars, tarwidths, nT, ncol, TF)
+function _fill_jac!(out, ishift, totals, vars, varwidths, tars, tarwidths, nT, ncol,
+        sparseH_U, TF)
     for j in axes(out, 2)
         nC = ncol === nothing ? nT*varwidths[j] : ncol[j]
         v = vars[j]
@@ -194,11 +198,12 @@ function _fill_jac!(out, ishift, totals, vars, varwidths, tars, tarwidths, nT, n
             vtar = tars[i]
             jac = get(totals[v], vtar, nothing)
             if jac === nothing
-                out[i,j] = Zeros{TF}(nT*tarwidths[i], nC)
+                nR = nT * tarwidths[i]
+                out[i,j] = sparseH_U ? spzeros(TF, nR, nC) : Zeros{TF}(nR, nC)
             elseif jac isa MatrixMap
                 out[i,j] = jac.out
             else
-                out[i,j] = jac(nT)
+                out[i,j] = sparseH_U ? sparse(jac, nT) : jac(nT)
                 push!(ishift, (i,j))
             end
         end
@@ -208,7 +213,8 @@ end
 const ZMat{TF} = Zeros{TF, 2, Tuple{Base.OneTo{Int64}, Base.OneTo{Int64}}}
 
 function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
-        nTfull::Int=tjac.nT) where TF
+        nTfull::Int=tjac.nT, sparseH_U::Bool=false,
+        linsolvertype=default_linsolvertype(sparseH_U)) where TF
     tars = tjac.tars
     nT = tjac.nT
     exovars isa Symbol && (exovars = (exovars,))
@@ -243,26 +249,29 @@ function GEJacobian(tjac::TotalJacobian{TF}, exovars, endosrcs=nothing;
     tarwidths = map(n->length(vals[n]), tars)
     endowidths = map(n->length(vals[n]), endosrcs)
     exowidths = map(n->length(vals[n]), exovars)
-    H_Ublks = Matrix{Union{Matrix{TF},SubMat{TF},ZMat{TF}}}(undef, ntar, nendo)
+    H_Ubm = Matrix{sparseH_U ? SparseMatrixCSC{TF,Int} : DenseBlock{TF}}(undef, ntar, nendo)
     iH_Ushift = Tuple{Int,Int}[]
-    _fill_jac!(H_Ublks, iH_Ushift, tjac.totals, endosrcs, endowidths, tars, tarwidths,
-        nT, nothing, TF)
-    H_Ublks = mortar(H_Ublks)
-    H_Zblks = Matrix{Union{Matrix{TF},SubMat{TF},ZMat{TF}}}(undef, ntar, nexo)
+    _fill_jac!(H_Ubm, iH_Ushift, tjac.totals, endosrcs, endowidths, tars, tarwidths,
+        nT, nothing, sparseH_U, TF)
+    H_Ublks = mortar(H_Ubm)
+    H_Zbm = Matrix{DenseBlock{TF}}(undef, ntar, nexo)
     iH_Zshift = Tuple{Int,Int}[]
-    _fill_jac!(H_Zblks, iH_Zshift, tjac.totals, exovars, exowidths, tars, tarwidths,
-        nT, nZcol, TF)
-    H_Zblks = mortar(H_Zblks)
-    H_U = PseudoBlockMatrix(Array(H_Ublks), axes(H_Ublks))
+    _fill_jac!(H_Zbm, iH_Zshift, tjac.totals, exovars, exowidths, tars, tarwidths,
+        nT, nZcol, false, TF)
+    H_Zblks = mortar(H_Zbm)
+    H_Udata = sparseH_U ?
+        hvcat(nendo, (H_Ubm[i,j] for i in axes(H_Ubm,1) for j in axes(H_Ubm,2))...) :
+            Array(H_Ublks)
+    # Keep the block structure for copying data
+    H_U = PseudoBlockMatrix(H_Udata, axes(H_Ublks))
     H_Z = PseudoBlockMatrix(Array(H_Zblks), axes(H_Zblks))
-    ws = LUWs(H_U.blocks)
-    H_Ulu = LU(LAPACK.getrf!(ws, H_U.blocks)...)
     G_U = similar(H_Z)
-    ldiv!(G_U, H_Ulu, H_Z)
+    solver = init(linsolvertype, H_Udata, H_Z.blocks, G_U.blocks)
+    solve!(solver)
     rmul!(G_U, -one(eltype(G_U)))
     G_U = PseudoBlockMatrix(G_U, nT*endowidths, nZcol)
-    return GEJacobian(tjac, exovars, endosrcs, H_Z, H_Zblks, iH_Zshift, ws, H_U,
-        H_Ublks, iH_Ushift, G_U, nTfull, nZcol)
+    return GEJacobian(tjac, exovars, endosrcs, H_Z, H_Zblks, iH_Zshift, solver,
+        H_U, H_Ublks, iH_Ushift, G_U, nTfull, nZcol)
 end
 
 show(io::IO, gj::GEJacobian) =
@@ -378,6 +387,25 @@ end
     end
 end
 
+@inline _blockcopyto!(tar::PseudoBlockMat{TF,<:Matrix}, src::BlockMatrix) where TF =
+    _copyto!(MemoryLayout(tar), MemoryLayout(src), tar, src)
+
+@inline function _blockcopyto!(tar::PseudoBlockMat{TF,<:SparseMatrixCSC}, src::BlockMatrix) where TF
+    nzs = getnzval(tar.blocks)
+    k = 1
+    for bj in 1:blocksize(src,2)
+        for j in axes(src.blocks[1,bj], 2)
+            for bi in 1:blocksize(src, 1)
+                blk = src.blocks[bi,bj]
+                col = view(getnzval(blk), nzrange(blk, j))
+                copyto!(nzs, k, col)
+                k += length(col)
+            end
+        end
+    end
+    return tar
+end
+
 @inline function (p::GEJacobianUpdatePlan)(varvals::NamedTuple)
     gj = p.gj
     tjac = gj.tjac
@@ -398,14 +426,11 @@ end
     end
     for (i, j) in p.itarH_U
         Smap = tjac[gj.endosrcs[j]][tjac.tars[i]]
-        mul!(gj.H_Ublks.blocks[i,j], Smap, true)
+        mul!(gj.H_Ublks.blocks[i,j], Smap, true; rankdiag=false)
     end
-    # This avoids 1 allocation from copyto!
-    _copyto!(MemoryLayout(gj.H_Z), MemoryLayout(gj.H_Zblks), gj.H_Z, gj.H_Zblks)
-    _copyto!(MemoryLayout(gj.H_U), MemoryLayout(gj.H_Ublks), gj.H_U, gj.H_Ublks)
-    # Non-allocating alternative to lu!
-    H_U = LU(LAPACK.getrf!(gj.H_Uws, gj.H_U.blocks)...)
-    ldiv!(gj.G_U.blocks, H_U, gj.H_Z)
+    _blockcopyto!(gj.H_Z, gj.H_Zblks)
+    _blockcopyto!(gj.H_U, gj.H_Ublks)
+    solve!(gj.solver, gj.H_U.blocks)
     rmul!(gj.G_U.blocks, -one(eltype(gj.G_U)))
     return p.gj
 end

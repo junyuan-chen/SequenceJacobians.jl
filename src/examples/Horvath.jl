@@ -115,7 +115,7 @@ function ss(p, β, eis, frisch, hwelast, solver)
     if hwelast == -1
         p.ζ .= exp.(p.Λ'*log.(p.μ) .- p.invpiece)
         p.Y .= p.μY ./ p.μ
-        p.K .= β ./ (1.0.-β.*(1.0.-p.δ)) .* (p.θ.*p.α) .* p.μ ./ p.ζ .* p.Y
+        p.K .= p.ζk ./ p.ζ
     else
         p.lμZ .= log.(p.μZ)
         p.lμZ[.~isfinite.(p.lμZ)] .= 0
@@ -241,7 +241,7 @@ end
     return euler
 end
 
-function Horvathmodel(p, calis, solver)
+function Horvathmodel(p, calis, solver, sparseH_U)
     N = length(p.α)
     calisbY = [:p=>p, :μ=>p.μ, :A=>p.A, :sA1=>1.0, :sA2=>ones(length(p.A)),
         :K=>p.K, :frisch=>calis[:frisch]]
@@ -249,7 +249,7 @@ function Horvathmodel(p, calis, solver)
     bY = block([labor_blk(), labortot_blk(), valueadded_blk(), intermediate_blk(),
         production_blk()], [:μ, :A, :K, :sA1, :sA2], [:Y, :Ltot, :L, :VA, :X],
         calisbY, [:Y=>p.Y, :Ltot=>sum(p.L)],
-        [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=solver)
+        [:Ydiff=>zeros(N), :Ltotdiff=>0.0], solver=solver, sparseH_U=sparseH_U)
     bζ = block([investuse_blk(), investprice_blk()],
         [:μ, :I], [:ζ, :Z], calisbζ, :ζ=>p.ζ, :ζdiff=>zeros(N), solver=solver)
     m = model([consumption_blk(), constot_blk(), bY, investment_blk(),

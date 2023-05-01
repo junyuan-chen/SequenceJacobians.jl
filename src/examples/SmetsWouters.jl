@@ -184,12 +184,12 @@ const default_params = (
     α=0.197,    # capital share in production
     φp=0.77,    # fixed cost of production
     ψ=0.401,    # normalized capital utilization adjustment costs elasticity
-    φ=6.556,    # steady-state elasticity of capital adjustment cost
+    φ=6.556,    # steady-state elasticity of investment adjustment cost
     δ=0.025,    # depreciation rate
     ιp=0.174,   # degree of price indexation
-    ζp=0.518,   # price rigidity
+    ξp=0.518,   # price rigidity
     ιw=0.536,   # degree of wage indexation
-    ζw=0.765,   # wage rigidity
+    ξw=0.765,   # wage rigidity
     μw_ss=1.5,  # steady-state wage markup
     curvp=10,   # curvature of Kimball goods market aggregator
     curvw=10,   # curvature of Kimball labor market aggregator
@@ -202,49 +202,44 @@ const default_params = (
     πbar=0.635  # quarterly steady-state inflation rate
 )
 
-function swparams(calis)
-    v = Dict{Symbol,Float64}(pairs(calis))
-    v[:β] = 1 / (v[:cβ] / 100 + 1)
-    v[:γ] = 1 + v[:γbar] / 100
-    v[:βbar] = v[:β] * v[:γ]^(1 - v[:σc])
-    v[:Rkss] = v[:γ]^v[:σc] / v[:β] - (1 - v[:δ])
-    v[:Ik] = (1 - (1 - v[:δ]) / v[:γ]) * v[:γ]
-    v[:wss] = (v[:α]^v[:α] * (1-v[:α])^(1-v[:α]) /
-        ((1+v[:φp]) * v[:Rkss]^v[:α]))^(1/(1-v[:α]))
-    v[:nk] = ((1 - v[:α]) / v[:α]) * (v[:Rkss] / v[:wss])
-    v[:ky] = (1 + v[:φp]) * v[:nk]^(v[:α] - 1)
-    v[:Iy] = v[:Ik] * v[:ky]
-    v[:cy] = 1 - v[:g] - v[:Iy]
-    v[:zy] = v[:Rkss] * v[:ky]
-    v[:whlc] = (1/v[:μw_ss]) * (1-v[:α]) / v[:α] * v[:Rkss] * v[:ky] / v[:cy]
-    v[:c1] = (v[:λc] / v[:γ]) / (1 + v[:λc] / v[:γ])
-    v[:c2] = ((v[:σc] - 1) * v[:whlc]) / (v[:σc] * (1 + v[:λc] / v[:γ]))
-    v[:c3] = (1 - v[:λc] / v[:γ]) / ((1 + v[:λc] / v[:γ]) * v[:σc])
-    v[:I1] = 1 / (1 + v[:βbar])
-    v[:I2] = v[:I1] / (v[:γ]^2 * v[:φ])
-    v[:q1] = v[:βbar] * (1 - v[:δ]) / v[:γ]
-    v[:z1] = (1 - v[:ψ]) / v[:ψ]
-    v[:k1] = (1 - v[:δ]) / v[:γ]
-    v[:k2] = (1 - (1 - v[:δ]) / v[:γ]) * v[:γ]^2 * v[:φ]
-    v[:π1] = v[:ιp] / (1 + v[:βbar] * v[:ιp])
-    v[:π2] = v[:βbar] / (1 + v[:βbar] * v[:ιp])
-    v[:π3] = (1 - v[:βbar] * v[:ζp]) * (1 - v[:ζp]) / (
-        v[:ζp] * (v[:φp] * v[:curvp] + 1) * (1 + v[:βbar] * v[:ιp]))
-    v[:w1] = 1 / (1 + v[:βbar])
-    v[:w2] = (1 + v[:βbar] * v[:ιw]) * v[:w1]
-    v[:w3] = v[:ιw] * v[:w1]
-    v[:w4] = (1 - v[:βbar] * v[:ζw]) * (1 - v[:ζw]) / (
-        (1 + v[:βbar]) * v[:ζw] * ((v[:μw_ss] - 1) * v[:curvw] + 1))
-    v[:ibar] = 100 * ((1 + v[:πbar] / 100) / (v[:β] * v[:γ]^(-v[:σc])) - 1)
-    v[:i] = v[:ibar]
-
-    # Fill in zero deviations in steady state
-    ks = [:I, :If, :q, :qf, :k, :kf, :rk, :rkf, :r, :rf, :n, :nf, :w, :wf, :c, :cf,
-        :y, :yf, :πp, :μp, :μp_f, :μw, :μw_f, :z, :zf, :εa, :εb, :εg, :εI, :εi, :εp, :εw]
-    for k in ks
-        v[k] = 0
-    end
-    return v
+function swparams(p)
+    β = 1 / (p.cβ / 100 + 1)
+    γ = 1 + p.γbar / 100
+    βbar = β * γ^(1 - p.σc)
+    Rkss = γ^p.σc / β - (1 - p.δ)
+    Ik = (1 - (1 - p.δ) / γ) * γ
+    α = p.α
+    wss = (α^α * (1-α)^(1-α) / ((1+p.φp) * Rkss^α))^(1/(1-α))
+    nk = ((1 - α) / α) * Rkss / wss
+    ky = (1 + p.φp) * nk^(α - 1)
+    Iy = Ik * ky
+    cy = 1 - p.g - Iy
+    zy = Rkss * ky
+    whlc = (1/p.μw_ss) * (1-α) / α * Rkss * ky / cy
+    λc = p.λc
+    c1 = (λc / γ) / (1 + λc / γ)
+    c2 = ((p.σc - 1) * whlc) / (p.σc * (1 + λc / γ))
+    c3 = (1 - λc / γ) / ((1 + λc / γ) * p.σc)
+    I1 = 1 / (1 + βbar)
+    I2 = I1 / (γ^2 * p.φ)
+    q1 = βbar * (1 - p.δ) / γ
+    z1 = (1 - p.ψ) / p.ψ
+    k1 = (1 - p.δ) / γ
+    k2 = (1 - (1 - p.δ) / γ) * γ^2 * p.φ
+    π0 = 1 + βbar * p.ιp
+    π1 = p.ιp / π0
+    π2 = βbar / π0
+    π3 = (1 - βbar * p.ξp) * (1 - p.ξp) / (p.ξp * (p.φp * p.curvp + 1) * π0)
+    w1 = I1
+    w2 = (1 + βbar * p.ιw) * w1
+    w3 = p.ιw * w1
+    w4 = (1 - βbar * p.ξw) * (1 - p.ξw) / (
+        (1 + βbar) * p.ξw * ((p.μw_ss - 1) * p.curvw + 1))
+    i = 100 * ((1 + p.πbar / 100) / (β * γ^(-p.σc)) - 1)
+    return (β=β, γ=γ, βbar=βbar, Rkss=Rkss, wss=wss, whlc=whlc,
+        c1=c1, c2=c2, c3=c3, λc=λc, σl=p.σl, I1=I1, I2=I2, q1=q1, z1=z1, φp=p.φp,
+        α=α, k1=k1, k2=k2, π1=π1, π2=π2, π3=π3, w1=w1, w2=w2, w3=w3, w4=w4, ρ=p.ρ,
+        ψ1=p.ψ1, ψ2=p.ψ2, ψ3=p.ψ3, cy=cy, Iy=Iy, zy=zy, i=i)
 end
 
 function swmodelss(calis, solver)
@@ -252,6 +247,13 @@ function swmodelss(calis, solver)
         firm_blk(solver), firm_f_blk(solver), nkpc_p_blk(), nkpc_w_blk(), monetary_blk(),
         fisher_blk(), labor_mkt_blk(), goods_mkt_blk(), goods_mkt_f_blk(),
         ygrowth_blk(), cgrowth_blk(), Igrowth_blk(), wgrowth_blk()])
+    calis = Dict(pairs(calis)...)
+    # Fill in zero deviations in steady state
+    ks = [:I, :If, :q, :qf, :k, :kf, :rk, :rkf, :r, :rf, :n, :nf, :w, :wf, :c, :cf,
+        :y, :yf, :πp, :μp, :μp_f, :μw, :μw_f, :z, :zf, :εa, :εb, :εg, :εI, :εi, :εp, :εw]
+    for k in ks
+        calis[k] = 0
+    end
     ss = SteadyState(m, calis)
     return m, ss
 end
