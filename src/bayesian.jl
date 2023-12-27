@@ -28,6 +28,7 @@ struct BayesianModel{TF, NT, PR<:Tuple, SH<:Tuple, N1, N2, N3,
     Ycache::Vector{TF}
     nT::Int
     Tobs::Int
+    x::Vector{TF}
     dl::Vector{TF}
     dlcache::GC
     d2l::Matrix{TF}
@@ -262,6 +263,7 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     allcovcache = FFTWAllCovCache(nT, Nobs, wexo, TF; allcovcachekwargs...)
     V = Matrix{TF}(undef, nY, nY)
     dl = Vector{TF}(undef, npara)
+    x = similar(dl)
     dlcache = GradientCache{TF,Nothing,Nothing,Vector{TF},fdtype,TF,Val(true)}(
         zero(TF), nothing, nothing, similar(dl))
     d2l = Matrix{TF}(undef, npara, npara)
@@ -270,7 +272,7 @@ function bayesian(gs::GMaps{TF}, shocks, observables,
     return BayesianModel(shockses, shockparas, strucparas, priors, lookuppara,
         exovars, obs, lookupobs, Ref(paravals), paraaxis, u, gs, shocks, Z, G, GZ, SE,
         allcovcache, V, measurement_error, Y, Ycache, nT, Tobs,
-        dl, dlcache, d2l, d2lcache, fdkwargs)
+        x, dl, dlcache, d2l, d2lcache, fdkwargs)
 end
 
 nshock(bm::BayesianModel) = typeof(bm).parameters[5]
@@ -452,6 +454,20 @@ end
 _resize_fdcache!(ca::GradientCache{<:Any,Nothing,Nothing,<:AbstractVector}, N::Int) =
     resize!(ca.c3, N)
 
+function _copypara!(tar::Vector, src::NamedTuple)
+    i = 1
+    for v in src
+        if v isa Real
+            tar[i] = v
+            i += 1
+        else
+            copyto!(tar, i, v)
+            i += length(v)
+        end
+    end
+    return tar
+end
+
 function logposterior_and_gradient!(bm::BayesOrTrans, θ, grad::AbstractVector)
     l = logposterior!(bm, θ)
     p = parent(bm)
@@ -459,7 +475,12 @@ function logposterior_and_gradient!(bm::BayesOrTrans, θ, grad::AbstractVector)
     # Transformation could change the dimension
     dimension(bm) <= length(ca.c3) || _resize_fdcache!(ca, dimension(bm))
     ca = _update_fdcache(ca, l)
-    finite_difference_gradient!(grad, bm, θ, ca; p.fdkwargs...)
+    if θ isa AbstractArray
+        finite_difference_gradient!(grad, bm, θ, ca; p.fdkwargs...)
+    else
+        _copypara!(bm.x, θ)
+        finite_difference_gradient!(grad, bm, bm.x, ca; p.fdkwargs...)
+    end
     return l, grad
 end
 
@@ -479,7 +500,7 @@ function (bm::BayesOrTrans)(θ, grad::AbstractVector)
 end
 
 capabilities(::Type{<:BayesOrTrans}) = LogDensityOrder{1}()
-dimension(bm::BayesianModel) = length(bm.priors)
+dimension(bm::BayesianModel) = lastindex(bm.paraaxis)
 logdensity(bm::BayesianModel, θ) = logposterior!(bm, θ)
 
 # Automatic differentiation is not applicable and hence use FiniteDiff
@@ -498,7 +519,12 @@ function logdensity_and_gradient(bm::TransformedBayesianModel, θ)
     ca = p.dlcache
     dimension(bm) <= length(ca.c3) || _resize_fdcache!(ca, dimension(bm))
     ca = _update_fdcache(ca, l)
-    finite_difference_gradient!(grad, f, θ, ca; p.fdkwargs...)
+    if θ isa AbstractArray
+        finite_difference_gradient!(grad, f, θ, ca; p.fdkwargs...)
+    else
+        _copypara!(bm.x, θ)
+        finite_difference_gradient!(grad, f, bm.x, ca; p.fdkwargs...)
+    end
     return l, copy(grad)
 end
 
@@ -516,7 +542,12 @@ function logdensity_hessian!(bm::BayesOrTrans, θ, h::AbstractMatrix)
     _update_fdcache!(ca, θ)
     # Share fdkwargs with gradient for simplicity but their keywords are not identical
     f = Fix1(logdensity, bm)
-    finite_difference_hessian!(h, f, θ, ca; p.fdkwargs...)
+    if θ isa AbstractArray
+        finite_difference_hessian!(h, f, θ, ca; p.fdkwargs...)
+    else
+        _copypara!(bm.x, θ)
+        finite_difference_hessian!(h, f, bm.x, ca; p.fdkwargs...)
+    end
     return h
 end
 

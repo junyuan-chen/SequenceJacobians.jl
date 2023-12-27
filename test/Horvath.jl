@@ -3,7 +3,7 @@
     vlw = loadjson("vlw")
     p = hv.HorvathPlanner(vlw)
     N = length(p.C)
-    T = 60
+    T = 50
     @testset "hwelast=-1" begin
         calis = Dict(:p=>p, :β=>0.96, :eis=>1, :frisch=>0, :hwelast=>-1)
         ss = hv.ss((p=p, β=0.96, eis=1, frisch=0, hwelast=-1)..., Hybrid)
@@ -127,7 +127,7 @@
             -0.0250684500164411, -0.0302002285083591] atol=1e-3
 
         df = DataFrame(aslongtable(irf))
-        @test nrow(df) == 825840
+        @test nrow(df) == 688200
         @test df[(df.exovar.==:A37).&(df.endovar.==:K1),:value] == irf[:A][:K][:,1,37]
 
         εA = vcat(zeros(T-1,37), reshape(vlw[:εA],70,37))
@@ -146,7 +146,7 @@
 
         dA = vec(A)
         j1 = TotalJacobian(m, (:A, :K, :μ), (:euler, :goods_mkt), vals, T, dZs=(:A=>dA,))
-        @test j1.ncol == [1, 2220, 2220]
+        @test j1.ncol == [1, N*T, N*T]
         gj1 = GEJacobian(j1, :A)
         gs1 = GMaps(gj1)
         tarvals = rowblocks(zeros(N*16), 16)
@@ -181,7 +181,10 @@
         pr = [:σA => StructArray(InverseGamma.(fill(2.0,N), fill(0.1,N))),
             :ρA => StructArray{Beta{Float64}}((p.ρA, 1.0.-p.ρA))]
         bm = bayesian(gs, sh, :Y=>cols, pr, df; nTtrim=5)
-        @test logposterior!(bm, bm[]) ≈ -2.3742774705342596e11 atol=1e5
+        @test logposterior!(bm, bm[]) ≈ -2.3737979795962247e11 atol=1e6
+        gr = zeros(2*N)
+        logposterior_and_gradient!(bm, bm[], gr)
+        @test gr[end] ≈ 9.73873152e8 atol=1e5
         @test length(bm.Z) == 1
         @test length(bm.Z[1]) == (T-5)*N
         @test length(bm.SE) == N

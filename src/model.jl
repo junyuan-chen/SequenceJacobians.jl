@@ -192,6 +192,7 @@ function SteadyState(m::SequenceSpaceModel, calibrated::ValidVarInput,
     initials === nothing && (initials = ())
     targets !== nothing && targets isa Pair && (targets = (targets,))
     targets === nothing && (targets = ())
+    # The orders of names in inputs are not preserved
     calibrated = Dict{Symbol,Any}(calibrated...)
     targets = Dict{Symbol,Any}(targets...)
     vars = Symbol[v for v in m.pool if v isa Symbol]

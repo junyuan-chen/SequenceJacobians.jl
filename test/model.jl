@@ -47,7 +47,8 @@ end
         @test blkstype(ss) == typeof(ss.blks)
         @test scalarinputs(ss) == (:β, :φ, :Z, :K)
         @test arrayinputs(ss) == ()
-        @test scalartargets(ss) == (:Y, :r, :euler, :goods_mkt)
+        @test Set(scalartargets(ss)[1:2]) == Set([:Y, :r])
+        @test Set(scalartargets(ss)[3:4]) == Set([:euler, :goods_mkt])
         @test arraytargets(ss) == ()
         @test ss[] == ss.varvals[]
 
@@ -70,7 +71,7 @@ end
         tars = [:r=>0.01, :Y=>1, :asset_mkt=>0]
         inits = [:β=>0.98, :Z=>0.85, :K=>3]
         ss = SteadyState(m, calis, inits, tars)
-        @test targets(ss) == (:Y, :r, :asset_mkt)
+        @test targets(ss) == (:Y, :r, :asset_mkt) || targets(ss) == (:r, :Y, :asset_mkt)
         _solve!(Hybrid, ss, xtol=1e-10)
         # Compare results with original Python package
         @test ss[:β] ≈ 0.981952788061795 atol=1e-8
@@ -83,7 +84,11 @@ end
         @test sprint(show, MIME("text/plain"), ss) == """
             3×3 SteadyState{Float64} with 3 blocks and 14 variables:
               unknowns: Z, K, β
-              targets:  Y, r, asset_mkt"""
+              targets:  Y, r, asset_mkt""" ||
+            sprint(show, MIME("text/plain"), ss) == """
+            3×3 SteadyState{Float64} with 3 blocks and 14 variables:
+              unknowns: Z, K, β
+              targets:  r, Y, asset_mkt"""
 
         @testset "Anderson acceleration" begin
             Main.backwardsolver(::KSHousehold) = NLsolve_anderson

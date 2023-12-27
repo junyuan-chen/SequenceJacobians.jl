@@ -7,10 +7,15 @@ struct ShiftMap{TF} <: AbstractJacobianMap{TF}
     outs::Vector{CompositeShift{TF}}
 end
 
+#! To do: Find a more flexible approach for mixing Matrix types?
+# SubArray is used for G_U
+const MatrixMapMat{TF} = Union{Matrix{TF}, SubMat{TF}, Diagonal{TF, Vector{TF}},
+    Bidiagonal{TF, Vector{TF}}}
+
 struct MatrixMap{TF} <: AbstractJacobianMap{TF}
     inmaps::Vector{Union{ShiftMap{TF}, Nothing}}
     ins::Vector{Union{Matrix{TF}, Bool}}
-    maps::Vector{MatOrSub{TF}}
+    maps::Vector{MatrixMapMat{TF}}
     out::Matrix{TF}
 end
 
@@ -27,8 +32,11 @@ jacmap(S::Shift{TF}, inmat=true) where TF =
     ShiftMap(MatOrBool{TF}[inmat], [ShiftOrBool[true]], [Shift{TF}[S]],
         CompositeShift{TF}[S * true])
 
+@inline _tomat(M) = M isa Matrix ? M : collect(M)
+
 jacmap(M::AbstractMatrix{TF}, inmat=true) where TF =
-    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[inmat], MatOrSub{TF}[M], M * inmat)
+    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[inmat], MatrixMapMat{TF}[M],
+        _tomat(M * inmat))
 
 function jacmap(S::Shift{TF}, Slast::ShiftMap{TF}, inmat=nothing) where TF
     ins = copy(Slast.ins)
@@ -133,13 +141,15 @@ function _updateout!(Smap::ShiftMap)
 end
 
 jacmap(M::AbstractMatrix{TF}, Slast::ShiftMap{TF}, inmat) where TF =
-    MatrixMap(SMapOrNo{TF}[Slast], MatOrBool{TF}[inmat], MatOrSub{TF}[M], M*inmat)
+    MatrixMap(SMapOrNo{TF}[Slast], MatOrBool{TF}[inmat], MatrixMapMat{TF}[M],
+        _tomat(M * inmat))
 
 jacmap(M::AbstractMatrix{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF =
-    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[Mlast.out], MatOrSub{TF}[M], M*Mlast.out)
+    MatrixMap(SMapOrNo{TF}[nothing], MatOrBool{TF}[Mlast.out], MatrixMapMat{TF}[M],
+        _tomat(M * Mlast.out))
 
 # M is from a source variable
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, inmat::Union{Matrix{TF},Bool}) where TF
+function muladd!(Mmap::MatrixMap{TF}, M::AbstractMatrix{TF}, inmat::Union{Matrix{TF},Bool}) where TF
     push!(Mmap.inmaps, nothing)
     push!(Mmap.ins, inmat)
     push!(Mmap.maps, M)
@@ -147,7 +157,7 @@ function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, inmat::Union{Matrix{TF},B
     return Mmap
 end
 
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Slast::ShiftMap{TF}, inmat) where TF
+function muladd!(Mmap::MatrixMap{TF}, M::AbstractMatrix{TF}, Slast::ShiftMap{TF}, inmat) where TF
     push!(Mmap.inmaps, Slast)
     push!(Mmap.ins, inmat)
     push!(Mmap.maps, M)
@@ -155,7 +165,7 @@ function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Slast::ShiftMap{TF}, inma
     return Mmap
 end
 
-function muladd!(Mmap::MatrixMap{TF}, M::MatOrSub{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF
+function muladd!(Mmap::MatrixMap{TF}, M::AbstractMatrix{TF}, Mlast::MatrixMap{TF}, inmat=nothing) where TF
     push!(Mmap.inmaps, nothing)
     push!(Mmap.ins, Mlast.out)
     push!(Mmap.maps, M)
@@ -183,7 +193,8 @@ end
 
 # C is allowed to be smaller than M
 # For now, use external info to tell the block sizes
-function mul!(C::AbstractVecOrMat, M::MatrixMap, s::Number, β::Number=false;
+# @inline is needed for avoiding allocations when called from _fillG1!
+@inline function mul!(C::AbstractVecOrMat, M::MatrixMap, s::Number, β::Number=false;
         mb::Int=1, nb::Int=1)
     if mb === 1 && nb === 1
         return mul!(C, view(M.out, 1:size(C,1), 1:size(C,2)), s, true, β)
@@ -227,12 +238,11 @@ function show(io::IO, ::MIME"text/plain", S::ShiftMap{TF}) where TF
     end
 end
 
-show(io::IO, M::MatrixMap{TF}) where TF =
-    print(io, "MatrixMap{", TF, "}(", length(M.maps), ')')
+show(io::IO, M::MatrixMap) = print(io, typeof(M), '(', length(M.maps), ')')
 
-function show(io::IO, ::MIME"text/plain", M::MatrixMap{TF}) where TF
+function show(io::IO, ::MIME"text/plain", M::MatrixMap)
     N = length(M.maps)
-    print(io, "MatrixMap{", TF, "} combined from ", N, " component")
+    print(io, typeof(M), " combined from ", N, " component")
     println(io, N > 1 ? "s:" : ":")
     print(IOContext(io, :compact=>true), "  ", M.out)
 end

@@ -26,7 +26,7 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets, varvals::NamedTu
     targets isa Symbol && (targets = (targets,))
     excluded isa BlockOrVar && (excluded = (excluded,))
     isempty(sources) && throw(ArgumentError("sources cannot be empty"))
-    isempty(targets) && throw(ArgumentError("targets cannot be empty"))
+    # targets is allowed to be empty for PECombinedBlockJacobian
     # Maintain the order for sources and targets
     sources = collect(Symbol, sources)
     targets = collect(Symbol, targets)
@@ -89,7 +89,8 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets, varvals::NamedTu
                     # Must have been reached from at least one source
                     maplast = get(d, vi, nothing)
                     if maplast !== nothing
-                        makeinmat = maplast isa ShiftMap && !(blk isa SimpleBlock)
+                        bj = blkjacs[lookupblk[blk]]
+                        makeinmat = maplast isa ShiftMap && !(bj isa ShiftBlockJacobian)
                         inmat = makeinmat ? maplast(nT) : nothing
                         for vo in outputs(blk)
                             excluded !== nothing && vo in excluded && continue
@@ -133,10 +134,12 @@ function TotalJacobian(m::SequenceSpaceModel, sources, targets, varvals::NamedTu
             end
         end
     end
-    nrt = targets[nsrcbytar.<2]
-    length(nrt) > 0 && @warn "not all targets are reachable from at least two sources; check "*join(nrt, ", ")
-    nrs = sources[ntarbysrc.<1]
-    length(nrs) > 0 && @info "not all sources reach at least one target; check "*join(nrs, ", ")
+    if !isempty(targets)
+        nrt = targets[nsrcbytar.<2]
+        length(nrt) > 0 && @warn "not all targets are reachable from at least two sources; check "*join(nrt, ", ")
+        nrs = sources[ntarbysrc.<1]
+        length(nrs) > 0 && @info "not all sources reach at least one target; check "*join(nrs, ", ")
+    end
     dag = SimpleDiGraphFromIterator(edges)
     return TotalJacobian(m, lookupblk, dag, pool, invpool, Ref(varvals), nT, ncol,
         sources, targets, nsrcbytar, ntarbysrc, excluded, blkjacs, dZs, parts, totals)
@@ -348,13 +351,13 @@ function plan(gj::GEJacobian{TF}, params; dZvars=nothing) where TF
             blk = m.pool[v]
             blk isa Symbol && continue
             v in vaffected || updateall || continue
-            if blk isa SimpleBlock
+            bj = tjac.blkjacs[lookupblk[blk]]
+            if bj isa ShiftBlockJacobian
                 push!(smaps, (d[vo] for vo in outputs(blk))...)
             else
                 if updateall
                     iinaffected = collect(1:length(d[outputs(blk)[1]].ins))
                 else
-                    bj = tjac.blkjacs[lookupblk[blk]]
                     # Order of ins needs to match the map in totals
                     ins = intersect!(unique!(map(i->m.invpool[inputs(blk)[i]], bj.iins)), vreached)
                     iinaffected = findall(in(vaffected), ins)
@@ -507,9 +510,9 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
                     maplast = get(d, vi, nothing)
                     if maplast !== nothing
                         # Need to collect mmaps with different ins separately
-                        blk isa SimpleBlock ? (blkmmaps = nothing) :
+                        bj isa ShiftBlockJacobian ? (blkmmaps = nothing) :
                             (blkmmaps = MatrixMap{TF}[]; push!(mmaps, blkmmaps))
-                        makeinmat = maplast isa ShiftMap && !(blk isa SimpleBlock)
+                        makeinmat = maplast isa ShiftMap && !(bj isa ShiftBlockJacobian)
                         inmat = makeinmat ? maplast(nT) : nothing
                         for vo in outputs(blk)
                             vars === nothing || vo in vars || continue
@@ -534,7 +537,7 @@ function GMaps(gj::GEJacobian{TF}, endovars=nothing) where TF
             else # vi is an exogenous variable
                 dZ = tjac.dZs === nothing ? true : get(tjac.dZs, vi, true)
                 idz = inds[vi]
-                blk isa SimpleBlock ? (blkmmaps = nothing) :
+                bj isa ShiftBlockJacobian ? (blkmmaps = nothing) :
                     (blkmmaps = MatrixMap{TF}[]; push!(mmaps, blkmmaps))
                 for vo in outputs(blk)
                     vars === nothing || vo in vars || continue

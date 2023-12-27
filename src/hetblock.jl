@@ -190,8 +190,7 @@ function _setJ!(ca::HetAgentJacCache, i::Int, npol::Int)
     end
 end
 
-function _jacobian!(b::HetBlock, ca::HetAgentJacCache, i::Int, nT::Int, varvals,
-        evs, evsss)
+function _jacobian!(b::HetBlock, ca::HetAgentJacCache, i::Int, nT::Int, varvals, evs, evsss)
 
     ins = inputs(b)
     ha = ca.ha
@@ -289,7 +288,7 @@ function _getjaccache(b::HetBlock, nT::Int)
     end
 end
 
-struct HetBlockJacobian{BLK<:HetBlock, TF, CA<:HetAgentJacCache} <: AbstractBlockJacobian{TF}
+struct HetBlockJacobian{BLK<:HetBlock, TF, CA<:HetAgentJacCache} <: MatrixBlockJacobian{TF}
     blk::BLK
     ca::CA
     iins::Vector{Int}

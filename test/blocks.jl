@@ -231,5 +231,60 @@ end
           inputs:  Y, w, Z, r
           outputs: Q, K, N, mc
           blocks:  SimpleBlock(labor), SimpleBlock(investment)"""
-    @test sprint(show, J) == "CombinedBlockJacobian(val, inv: Y, w, Z, r → Q, K, N, mc)"
+    @test sprint(show, J) == "CombinedBlockJacobian(val, inv: Y, w, Z, r → Q, K, N, mc)" ||
+        sprint(show, J) == "CombinedBlockJacobian(inv, val: Y, w, Z, r → Q, K, N, mc)"
+
+    b = block([blabor], [:Y, :w, :Z], [:N, :mc],
+        [:Y, :w, :K, :Z, :α].=>[1.0, 0.66, 10, 0.4677898145312322, 0.3299492385786802])
+    J = jacobian(b, 1:3, 3, varvals)
+    bj = jacobian(blabor, 1:3, 3, varvals)
+    @test J[1,1] ≈ bj[1,1](3) atol=1e-6
+    @test J[2,2] ≈ bj[2,2](3) atol=1e-6
+    varvals2 = merge(varvals, (α=0.5,))
+    J(varvals2)
+    bj(varvals2)
+    @test J[1,1] ≈ bj[1,1](3) atol=1e-6
+    @test J[2,2] ≈ bj[2,2](3) atol=1e-6
+
+    b2 = block([blabor, binvest], [:Y, :w, :Z], [:N, :mc, :inv],
+        [:Y, :w, :K, :Z, :α, :Q, :r, :δ, :εI, :εr].=>
+        [1.0, 0.66, 10, 0.4677898145312322, 0.3299492385786802, 1, 0.0125, 0.02, 4, 0])
+    J2 = jacobian(b2, 1:3, 3, varvals, dZs=(:w=>[0.1,0.05,0.0], :Z=>[0.1,0.05,0.0]))
+    J2(varvals2)
+    @test J[1,1] ≈ bj[1,1](3) atol=1e-6
+    u = PEImpulseUpdate(J2, :α, [:w, :Z], [:N, :mc], 3)
+    u((α=0.5,))
+    J2(varvals2)
+    @test u.vals[:,2,1] ≈ J2[2,2]
+
+    @test sprint(show, b) == "CombinedBlock(NoRootSolver, SimpleBlock(labor))"
+    @test sprint(show, MIME("text/plain"), b) == """
+        CombinedBlock(NoRootSolver) with 0×0 SteadyState{Float64} and 0 GE restriction:
+          inputs:  Y, w, Z
+          outputs: N, mc
+          block:  SimpleBlock(labor)"""
+    @test sprint(show, J) == "PECombinedBlockJacobian(Y, w, Z → N, mc)"
+end
+
+@testset "WrappedBlock" begin
+    using SequenceJacobians: SmetsWouters as sw
+    blk = sw.wage_markup_blk()
+    vals = sw.swparams(sw.default_params)
+    vals = (vals..., c=0.0, n=0.0, w=0.0, μw=0.0)
+    jac = jacobian(blk, (1,2), 300, vals)
+    b = wrap(blk, jac)
+    @test inputs(b) == inputs(blk)
+    @test invars(b) == invars(blk)
+    @test ssinputs(b) == ssinputs(blk)
+    @test outputs(b) == outputs(blk)
+    @test outlength(b, vals) == outlength(blk, vals)
+    @test outlength(b, vals, 1) == outlength(blk, vals, 1)
+
+    steadystate!(blk, vals)
+
+    @test sprint(show, b) == "WrappedBlock(SimpleBlock(wage_markup))"
+    @test sprint(show, MIME("text/plain"), b) == """
+        WrappedBlock(SimpleBlock(wage_markup)):
+          inputs:  c, n, w, λc, γ, σl, lag(c)
+          outputs: μw"""
 end

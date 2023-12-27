@@ -15,7 +15,8 @@ using FiniteDiff: JacobianCache, finite_difference_jacobian!, GradientCache,
     finite_difference_gradient!, HessianCache, finite_difference_hessian!, default_relstep
 using Graphs: AbstractGraph, Edge, SimpleDiGraphFromIterator, topological_sort_by_dfs
 using LinearAlgebra: BLAS, LAPACK, I, UniformScaling, Diagonal, LU, lu!, lu, rmul!,
-    Hermitian, cholesky!, ldiv!, inv!, norm, dot, stride1, diag, diagind
+    Hermitian, cholesky!, ldiv!, inv!, norm, dot, stride1, diag, diagind,
+    Diagonal, Bidiagonal
 using LogDensityProblems: LogDensityOrder
 using MacroTools
 using MacroTools: postwalk
@@ -111,6 +112,8 @@ export supconverged,
        block,
        steadystate!,
        AbstractBlockJacobian,
+       ShiftBlockJacobian,
+       MatrixBlockJacobian,
        SimpleBlockJacobian,
        jacobian,
        transition!,
@@ -198,6 +201,9 @@ export supconverged,
        CombinedBlock,
        CombinedBlockJacobian,
 
+       WrappedBlock,
+       wrap,
+
        @simple,
        @implicit,
 
@@ -219,6 +225,7 @@ export supconverged,
        aslongtable,
 
        ImpulseUpdate,
+       PEImpulseUpdate,
 
        BayesianModel,
        TransformedBayesianModel,
@@ -245,6 +252,7 @@ include("hetblock.jl")
 include("model.jl")
 include("jacobian.jl")
 include("combinedblock.jl")
+include("wrappedblock.jl")
 include("macros.jl")
 include("allcov.jl")
 include("shock.jl")

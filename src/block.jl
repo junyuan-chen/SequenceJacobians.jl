@@ -84,6 +84,9 @@ end
 
 abstract type AbstractBlockJacobian{TF} end
 
+abstract type ShiftBlockJacobian{TF} <: AbstractBlockJacobian{TF} end
+abstract type MatrixBlockJacobian{TF} <: AbstractBlockJacobian{TF} end
+
 struct ArrayToArgs{CumWidths, StaticArgs}
     function ArrayToArgs(cumwidths::NTuple{N,Int}, staticargs::Bool=true) where N
         N >= 1 || throw(ArgumentError("length of cumwidths must be at least 1"))
@@ -145,7 +148,7 @@ end
 
 const PseudoBlockMat{TF, P} = PseudoBlockMatrix{TF, P, Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 
-struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, ins, PF<:PartialF, FD} <: AbstractBlockJacobian{TF}
+struct SimpleBlockJacobian{BLK<:SimpleBlock, TF, ins, PF<:PartialF, FD} <: ShiftBlockJacobian{TF}
     blk::BLK
     J::PseudoBlockMat{TF}
     x::Vector{TF}
@@ -178,6 +181,7 @@ function (j::SimpleBlockJacobian{BLK,TF,ins})(varvals::NamedTuple) where {BLK,TF
     _tuple_copyto!(j.g.vals, _hascache(j.g) ? invals[2:end] : invals)
     # A cache should not be reached from any source variable
     _tuple_copyto!(j.x, map(k->getfield(varvals, k), ins))
+    # ! 1 allocation happens here?
     finite_difference_jacobian!(j.J.blocks, j.g, j.x, j.fdcache)
     return j
 end
